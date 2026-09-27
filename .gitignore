@@ -20,3 +20,8 @@ __pycache__/
 /crates/*/target/
 
 /dist/
+
+# Local credentials (including environment-specific variants)
+.env
+.env.*
+!.env.example

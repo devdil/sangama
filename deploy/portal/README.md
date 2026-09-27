@@ -1,7 +1,7 @@
 # Sangama hosted portal
 
 This is a separate Rust server-rendered portal, not the localhost inference control panel. PostgreSQL stores
-single-use invitations, directory registrations, and cryptographic network memberships. The DHT continues
+single-use invitations, user accounts, hashed login sessions, legacy directory registrations, and cryptographic network memberships. The DHT continues
 to store signed records in each node's SQLite database. Directory registration does not authorize inference;
 the separate membership API verifies peer-key ownership and signs short-lived authorization snapshots.
 See [the admitted mesh guide](../../docs/admitted-mesh.md) for enrollment, relay setup and revocation. No model weights or inference worker ports are deployed. The current Linode firewall configuration does
@@ -10,7 +10,7 @@ not yet expose a relay port; deploy an admitted relay deliberately before openin
 ## Current verification
 
 Local Docker tests pass: PostgreSQL persistence, invitation consumption, duplicate handling, form-origin checks,
-publication consent, HTML escaping, and database-role/container isolation. The directory and registration pages
+password hashing, session rotation/expiry, concurrent invitation redemption and operator controls. The directory and registration pages
 have been inspected in the browser. Cloud provisioning and public TLS still need a Linode credential and hostname.
 
 ## Local preview
@@ -29,8 +29,7 @@ docker compose -f deploy/portal/compose.yaml -f deploy/portal/compose.test.yaml 
 python3 scripts/test-portal.py
 ```
 
-Visit http://127.0.0.1:18080. The integration test expects a fresh database and leaves two clearly synthetic test
-registrations. It is not a test against production. The local override publishes only the portal on loopback;
+Visit http://127.0.0.1:18080. The integration test creates temporary accounts and invitations, then removes them. It is not a test against production. The local override publishes only the portal on loopback;
 PostgreSQL has no published port. Remove the test containers and their disposable data with the same Compose
 files/project and `down -v` when finished. Never use the test override on the public server.
 
@@ -83,7 +82,7 @@ sudo docker compose --env-file .env exec -T portal /usr/local/bin/sangama-portal
 ```
 
 This prints a secret invitation that expires in 24 hours. Give it only to the intended peer. The database stores
-its SHA-256 hash, and consumption/registration happens atomically. The invitation grants only a directory entry,
+its SHA-256 hash, and consumption/registration happens atomically. The invitation grants only a portal account,
 not DHT or inference membership. Do not publish invitations in Git, logs, screenshots, or public URLs.
 
 ## Operations
@@ -91,14 +90,21 @@ not DHT or inference membership. Do not publish invitations in Git, logs, screen
 The portal fails closed on DB loss and Docker restarts it. Public forms have same-origin enforcement, an 8 KiB
 body limit, bounded concurrent handlers, parameterized SQL, escaped output, no JavaScript, and restrictive CSP.
 Peer identifiers are private in the portal; device names/specifications are public only with explicit consent.
-There are no user accounts, automated emails, device ownership proofs, or public inference APIs in this release.
+Signup requires an invite code, username and password. Account login never grants worker or admin permissions. There are no automated emails, password-recovery flows, device ownership proofs, or public inference APIs. See [portal accounts](../../docs/portal-accounts.md).
 
 ### Browser operator controls
 
 The classic HTML `/admin` form uses a separate `ADMIN_TOKEN_FILE` credential.
 Run `prepare-secrets.py` on upgrades to generate the new named `admin_token`
-secret before `docker compose up`. The form can issue scoped network/directory
+secret before `docker compose up`. The form can issue scoped network/signup
 invitations, inspect membership expiry and revoke a peer. No operator browser
 session is stored. See [the UI workflow](../../docs/network-ui.md) for credential
 handling, limitations and local tests. Worker onboarding remains a local signed
 challenge; do not upload private peer keys to the portal.
+
+### Local provider credential
+
+Store the Linode API token as `LINODE_TOKEN` in the repository-root `.env` (mode 0600).
+The file and environment-specific variants are ignored by Git and excluded from Docker/SSH
+bundles. Load the value into `TF_VAR_linode_token` only in the Terraform child process;
+never pass it as a command-line argument or print it. The portal server does not need this token.
