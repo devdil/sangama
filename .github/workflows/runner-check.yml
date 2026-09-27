@@ -1,0 +1,11 @@
+name: Runner availability check
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify GitHub can start a runner
+        run: echo 'Runner started successfully; no checkout, secrets or third-party actions used.'
