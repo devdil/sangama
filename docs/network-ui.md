@@ -4,10 +4,10 @@ The hosted portal and local inference UI have different permissions. The portal 
 
 ## Hosted classic HTML portal
 
-The public navigation shows only Home, How it works, Sign up and Sign in. The landing page no longer lists registered devices.
+Signed-out visitors see only the landing page, Sign up and Sign in. Every other page redirects to Sign in. After signing in, members see the device directory on the home page, plus Connect a worker, How it works and Account.
 
 - **Sign up / Sign in:** invite-only accounts with username and password. Signup asks for no device details. Accounts do not connect or authorize a worker. See [portal accounts](portal-accounts.md).
-- **Connecting a worker:** follow the [invited-network guide](admitted-mesh.md). The operator supplies the network invitation, authority public key and configuration. Private peer keys never enter the website.
+- **Connect a worker (members):** gives the local identity, invitation-redemption and managed-node commands; the full reference is the [invited-network guide](admitted-mesh.md). The operator supplies the network invitation, authority public key and configuration. Private peer keys never enter the website.
 - **Operator (`/admin`, unlinked):** view admitted/expired/revoked memberships, issue a role-scoped network invitation or a signup invitation, and revoke a peer with explicit confirmation.
 
 Run `python3 deploy/portal/prepare-secrets.py` before rebuilding an existing Compose deployment. It now also creates a dedicated `secrets/admin_token` without replacing existing secrets. Compose mounts this only in the portal and sets `ADMIN_TOKEN_FILE`. Custom deployments can omit the variable to disable browser administration; the existing operator CLI still works. The configured credential must contain 32 random bytes encoded as 64 hex characters.

@@ -195,14 +195,29 @@ pub async fn signin(State(app): State<App>, Form(form): Form<Signin>) -> Respons
         .insert("set-cookie", cookie(&app, &session, 28800).parse().unwrap());
     response
 }
-pub async fn account(State(app): State<App>, headers: HeaderMap) -> Response {
-    let Some(session) = token(&app, &headers) else {
-        return Redirect::to("/signin").into_response();
+/// The signed-in username, if the request carries a live session.
+pub async fn member(app: &App, headers: &HeaderMap) -> Result<Option<String>, Response> {
+    let Some(session) = token(app, headers) else {
+        return Ok(None);
     };
     match app.db.query_opt("SELECT a.username FROM accounts a JOIN account_sessions s ON s.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now()", &[&hash(&session)]).await {
-        Ok(Some(row)) => page("Your account", &format!("<h1>Welcome, {}.</h1><p>You are signed in.</p><form action=\"/signout\" method=\"post\"><button type=\"submit\">Sign out</button></form>",escape(row.get(0)))).into_response(),
+        Ok(row) => Ok(row.map(|r| r.get(0))),
+        Err(_) => Err(unavailable()),
+    }
+}
+/// Member-only pages send signed-out visitors to sign in.
+pub async fn members_only(app: &App, headers: &HeaderMap, title: &str, body: &str) -> Response {
+    match member(app, headers).await {
+        Ok(Some(_)) => member_page(title, body).into_response(),
         Ok(None) => Redirect::to("/signin").into_response(),
-        Err(_) => unavailable(),
+        Err(response) => response,
+    }
+}
+pub async fn account(State(app): State<App>, headers: HeaderMap) -> Response {
+    match member(&app, &headers).await {
+        Ok(Some(name)) => member_page("Your account", &format!("<h1>Welcome, {}.</h1><p>You are signed in.</p><p><a class=\"button\" href=\"/\">Network directory</a> <a class=\"button\" href=\"/connect\">Connect a worker</a></p><p>Your account does not automatically admit a worker to the network.</p><form action=\"/signout\" method=\"post\"><button type=\"submit\">Sign out</button></form>",escape(&name))).into_response(),
+        Ok(None) => Redirect::to("/signin").into_response(),
+        Err(response) => response,
     }
 }
 pub async fn signout(State(app): State<App>, headers: HeaderMap) -> Response {
