@@ -82,6 +82,9 @@ try:
     cookie=headers['Set-Cookie'].split(';')[0]
     assert 'HttpOnly' in headers['Set-Cookie'] and 'SameSite=Strict' in headers['Set-Cookie']
     assert names[0] in request('/account',cookie=cookie)[2]
+    assert 'Device directory' in request('/',cookie=cookie)[2] and 'Device directory' not in request('/')[2]
+    for path in ['/connect','/about']:
+        assert request(path)[0]==303 and request(path,cookie=cookie)[0]==200
     session=cookie.split('=',1)[1]
     assert sql(f"SELECT count(*) FROM account_sessions WHERE token_hash='{hashlib.sha256(session.encode()).hexdigest()}'")=='1'
     assert sql(f"SELECT count(*) FROM account_sessions WHERE token_hash='{session}'")=='0'
@@ -101,7 +104,7 @@ try:
     assert any(request('/signin',login|{'password':'wrong'})[0]==429 for _ in range(21))
     assert sql('SELECT count(*) FROM registrations')==directory_count
     assert all(name not in request('/')[2] for name in names)
-    report={'passed':True,'checks':['signup has exactly invite code, username, password','cross-origin signup/signout blocked','password length enforced','invalid/expired/reused invites rejected','concurrent invite redemption has one winner','case-insensitive username uniqueness','duplicate signup preserves invitation','Argon2id password storage','authenticated account page','HttpOnly SameSite cookie','only session hashes stored','session survives restart','sign-in rotates session','sign-out revokes session','expired session rejected','authentication attempt rate limit','legacy directory preserved and account names not published'],'scope':'Local Docker portal and PostgreSQL. No production deployment.'}
+    report={'passed':True,'checks':['signup has exactly invite code, username, password','cross-origin signup/signout blocked','password length enforced','invalid/expired/reused invites rejected','concurrent invite redemption has one winner','case-insensitive username uniqueness','duplicate signup preserves invitation','Argon2id password storage','authenticated account page','directory, connect and how-it-works require sign-in','HttpOnly SameSite cookie','only session hashes stored','session survives restart','sign-in rotates session','sign-out revokes session','expired session rejected','authentication attempt rate limit','legacy directory preserved and account names not published'],'scope':'Local Docker portal and PostgreSQL. No production deployment.'}
     (ROOT/'runs/portal-test.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report,indent=2))
 finally:
