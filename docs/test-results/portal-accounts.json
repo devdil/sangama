@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "checks": [
+    "signup has exactly invite code, username, password",
+    "cross-origin signup/signout blocked",
+    "password length enforced",
+    "invalid/expired/reused invites rejected",
+    "concurrent invite redemption has one winner",
+    "case-insensitive username uniqueness",
+    "duplicate signup preserves invitation",
+    "Argon2id password storage",
+    "authenticated account page",
+    "HttpOnly SameSite cookie",
+    "only session hashes stored",
+    "session survives restart",
+    "sign-in rotates session",
+    "sign-out revokes session",
+    "expired session rejected",
+    "authentication attempt rate limit",
+    "legacy directory preserved and account names not published"
+  ],
+  "scope": "Local Docker portal and PostgreSQL. No production deployment."
+}

@@ -138,6 +138,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
 | [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
+| [Portal accounts](docs/portal-accounts.md) | Invite-only signup and sign-in |
 | [OpenCode](docs/opencode.md) | Local coding-assistant integration |
 
 The next milestone is a repeatable two-home-network test, followed by easier onboarding and measured improvements to performance and reliability.

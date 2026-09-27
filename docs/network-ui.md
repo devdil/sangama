@@ -4,13 +4,13 @@ The hosted portal and local inference UI have different permissions. The portal 
 
 ## Hosted classic HTML portal
 
-- **Register a device:** creates a directory entry with a directory invitation. It does not prove peer-key ownership or connect a worker.
+- **Sign up / Sign in:** invite-only accounts with username and password. Signup asks for no device details. Accounts do not connect or authorize a worker. See [portal accounts](portal-accounts.md).
 - **Connect a worker:** gives the local identity, invitation-redemption and managed-node commands. The operator supplies the authority public key and configuration. Private peer keys never enter the website.
-- **Operator:** view admitted/expired/revoked memberships, issue a role-scoped network invitation or a directory invitation, and revoke a peer with explicit confirmation.
+- **Operator:** view admitted/expired/revoked memberships, issue a role-scoped network invitation or a signup invitation, and revoke a peer with explicit confirmation.
 
 Run `python3 deploy/portal/prepare-secrets.py` before rebuilding an existing Compose deployment. It now also creates a dedicated `secrets/admin_token` without replacing existing secrets. Compose mounts this only in the portal and sets `ADMIN_TOKEN_FILE`. Custom deployments can omit the variable to disable browser administration; the existing operator CLI still works. The configured credential must contain 32 random bytes encoded as 64 hex characters.
 
-Use that separate credential in the Operator form for each action. It is not the database password, a worker token, an invitation or an identity key. There is no browser session/cookie and the credential is not reflected in results. Forms enforce the configured exact Origin; responses prohibit caching and framing. Admin POSTs have a process-wide limit of 20 per minute. This basic shared-operator access is for trusted deployments; it is not multi-user administration with individual audit identities or MFA. The global limit can temporarily deny an operator during abuse.
+Use that separate credential in the Operator form for each action. It is not the database password, a worker token, an invitation or an identity key. Operator authentication does not use the account session cookie and the credential is not reflected in results. Forms enforce the configured exact Origin; responses prohibit caching and framing. Admin POSTs have a process-wide limit of 20 per minute. This basic shared-operator access is for trusted deployments; it is not multi-user administration with individual audit identities or MFA. The global limit can temporarily deny an operator during abuse.
 
 An invitation is shown in its creation response only and expires after 24 hours or use. Do not refresh/resubmit the creation response if you do not want another invitation. Send invitations privately. A new valid invitation can readmit a previously revoked identity; revocation is not a permanent identity ban.
 

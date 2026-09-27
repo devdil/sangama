@@ -1,3 +1,4 @@
+mod accounts;
 mod admin;
 mod membership;
 use anyhow::{Context, Result, ensure};
@@ -38,7 +39,7 @@ fn hash(value: &str) -> String {
 }
 fn page(title: &str, body: &str) -> Html<String> {
     Html(format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Sangama</title><link rel="stylesheet" href="/style.css"></head><body><div class="sheet"><header><a class="wordmark" href="/">संगम <span>Sangama</span></a><p>Computers working together.</p></header><nav aria-label="Main"><a href="/">Network directory</a><a href="/join">Register a device</a><a href="/connect">Connect a worker</a><a href="/about">How it works</a><a href="/admin">Operator</a></nav><main>{}</main><footer>Sangama · Experimental peer-to-peer inference<br>Directory registration and network membership are separate. Membership verifies a peer key; it does not prove that a worker is online.</footer></div></body></html>"#,
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Sangama</title><link rel="stylesheet" href="/style.css"></head><body><div class="sheet"><header><a class="wordmark" href="/">संगम <span>Sangama</span></a><p>Computers working together.</p></header><nav aria-label="Main"><a href="/">Network directory</a><a href="/join">Sign up</a><a href="/signin">Sign in</a><a href="/connect">Connect a worker</a><a href="/about">How it works</a><a href="/admin">Operator</a></nav><main>{}</main><footer>Sangama · Experimental peer-to-peer inference<br>Portal accounts and network membership are separate. Membership verifies a peer key; it does not prove that a worker is online.</footer></div></body></html>"#,
         escape(title),
         body
     ))
@@ -112,7 +113,7 @@ async fn index(State(app): State<App>) -> Response {
         }
     };
     let mut body = format!(
-        r#"<p class="eyebrow">THE SANGAMA NETWORK</p><h1>A place for your computer<br>to be part of something larger.</h1><p class="intro">Register a device, meet the network, and help explore running language models across computers.</p><p><a class="button" href="/join">Register your device →</a></p><section class="notice"><strong>Early access</strong><p>We are testing with invited peers. Registration does not connect your device or share its resources automatically.</p></section><h2>Device directory <span class="count">{count} registered</span></h2><p>Declared specifications. Listed devices may be offline. Showing the latest 100 registrations.</p><div class="table-wrap"><table><thead><tr><th>Device</th><th>Platform</th><th>Memory</th><th>Status</th></tr></thead><tbody>"#
+        r#"<p class="eyebrow">THE SANGAMA NETWORK</p><h1>A place for your computer<br>to be part of something larger.</h1><p class="intro">Create an account, meet the network, and help explore running language models across computers.</p><p><a class="button" href="/join">Sign up</a> <a class="button" href="/signin">Sign in</a></p><section class="notice"><strong>Early access</strong><p>We are testing with invited peers. Registration does not connect your device or share its resources automatically.</p></section><h2>Device directory <span class="count">{count} registered</span></h2><p>Declared specifications. Listed devices may be offline. Showing the latest 100 registrations.</p><div class="table-wrap"><table><thead><tr><th>Device</th><th>Platform</th><th>Memory</th><th>Status</th></tr></thead><tbody>"#
     );
     if rows.is_empty() {
         body.push_str("<tr><td colspan=\"4\" class=\"empty\">No devices registered yet. Yours can be the first.</td></tr>");
@@ -135,52 +136,10 @@ async fn index(State(app): State<App>) -> Response {
     body.push_str("</tbody></table></div><h2>Start small. Measure honestly.</h2><p>Sangama currently splits one supported Qwen model between workers. Invited peers can use an encrypted relay, memory-aware shard loading and readiness checks. Manage allocation and inference from your local UI. This is an experimental trusted network; arbitrary models and anonymous public participation are not supported.</p>");
     page("Network directory", &body).into_response()
 }
-async fn join() -> Html<String> {
-    page(
-        "Register a device",
-        r#"<p class="eyebrow">JOIN EARLY ACCESS</p><h1>Introduce your device.</h1><p>You need a single-use invitation from the network operator. Choose a public device name; it, your platform, and memory size appear in the directory. Do not include your name or address unless you want them public.</p><form action="/join" method="post"><label for="name">Public device name</label><input id="name" name="name" maxlength="80" required placeholder="e.g. Cedar MacBook"><label for="peer_id">Sangama peer ID</label><input id="peer_id" name="peer_id" minlength="32" maxlength="128" required autocomplete="off"><small>Copy the peer ID from your local Sangama node. Registration does not verify ownership. Admitted peer IDs, roles and expiry are published in membership snapshots.</small><label for="platform">Operating system</label><select id="platform" name="platform"><option>macOS</option><option>Linux</option><option>Windows</option><option>Other</option></select><label for="memory_gib">Memory you have available (GiB)</label><input id="memory_gib" name="memory_gib" type="number" min="1" max="4096" required><label for="invitation">Invitation code</label><input id="invitation" name="invitation" type="password" maxlength="64" required autocomplete="off"><small>Valid for 24 hours and one registration. Never enter a model-worker token here.</small><p><label class="check"><input type="checkbox" name="consent" value="yes" required> I agree to publish my device name, platform, and memory size.</label></p><button type="submit">Register device</button></form><p>Need an invitation? Ask the person who invited you to Sangama.</p>"#,
-    )
-}
-#[derive(Deserialize)]
-struct Registration {
-    name: String,
-    peer_id: String,
-    platform: String,
-    memory_gib: i32,
-    invitation: String,
-    consent: Option<String>,
-}
-fn valid(form: &Registration) -> bool {
-    !form.name.trim().is_empty()
-        && form.name.chars().count() <= 80
-        && !form.name.chars().any(char::is_control)
-        && (32..=128).contains(&form.peer_id.len())
-        && form.peer_id.bytes().all(|c| c.is_ascii_alphanumeric())
-        && ["macOS", "Linux", "Windows", "Other"].contains(&form.platform.as_str())
-        && (1..=4096).contains(&form.memory_gib)
-        && form.invitation.len() == 64
-        && form.invitation.bytes().all(|c| c.is_ascii_hexdigit())
-        && form.consent.as_deref() == Some("yes")
-}
-async fn register(State(app): State<App>, Form(form): Form<Registration>) -> Response {
-    if !valid(&form) {
-        return failure(
-            StatusCode::BAD_REQUEST,
-            "Please check the form fields and publication consent.",
-        );
-    }
-    let result=app.db.query("WITH claimed AS (UPDATE invitations SET used_at=now() WHERE token_hash=$1 AND used_at IS NULL AND expires_at>now() RETURNING id) INSERT INTO registrations (name,peer_id,platform,memory_gib,invitation_id) SELECT $2,$3,$4,$5,id FROM claimed RETURNING id",&[&hash(&form.invitation),&form.name.trim(),&form.peer_id,&form.platform,&form.memory_gib]).await;
-    match result {
-        Ok(rows) if !rows.is_empty()=>(StatusCode::CREATED,page("Device registered","<h1>Your device is registered.</h1><p>Nothing is running on your computer yet. Ask the operator for a scoped network invitation, the authority public key, and your worker configuration. The mesh-join command proves ownership of your peer key before any inference connection is allowed.</p><p><a href=\"/\">View the directory →</a></p>")).into_response(),
-        Ok(_)=>failure(StatusCode::FORBIDDEN,"This invitation is invalid, expired, or already used."),
-        Err(e) if e.code()==Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)=>failure(StatusCode::CONFLICT,"This device is already registered."),
-        Err(_)=>failure(StatusCode::SERVICE_UNAVAILABLE,"Registration is temporarily unavailable. Please try again."),
-    }
-}
 async fn connect() -> Html<String> {
     page(
         "Connect a worker",
-        r#"<h1>Connect your worker</h1><p>Directory registration and cryptographic admission use different invitations. Request a network invitation with the worker role, the authority public key through a trusted channel, a relay address and your node configuration from the operator.</p><ol><li>Build Sangama and prepare the supported Qwen shard files locally.</li><li>Create a persistent identity. Share only the peer ID/public key with the operator.</li><li>Save your network invitation to a private file (0600), then redeem it locally. Your worker signs the challenge; never upload its private key here.</li><li>Start the managed node. It begins unloaded; the local inference UI can allocate prepared shards and check readiness.</li></ol><pre>target/release/sangama mesh-identity --state-dir .mesh/worker
+        r#"<h1>Connect your worker</h1><p>Portal signup and cryptographic admission use different invitations. Request a network invitation with the worker role, the authority public key through a trusted channel, a relay address and your node configuration from the operator.</p><ol><li>Build Sangama and prepare the supported Qwen shard files locally.</li><li>Create a persistent identity. Share only the peer ID/public key with the operator.</li><li>Save your network invitation to a private file (0600), then redeem it locally. Your worker signs the challenge; never upload its private key here.</li><li>Start the managed node. It begins unloaded; the local inference UI can allocate prepared shards and check readiness.</li></ol><pre>target/release/sangama mesh-identity --state-dir .mesh/worker
  target/release/sangama mesh-join --config worker.json --invitation-file /path/to/private-invitation
  python3 scripts/mesh-node.py --config worker.json</pre><h2>Understand your status</h2><dl><dt>Registered</dt><dd>A directory entry exists; no network access is implied.</dd><dt>Admitted</dt><dd>A peer key has valid scoped membership. It may still be offline.</dd><dt>Reachable / loaded / ready</dt><dd>Checked by your local UI against configured bridges. A complete verified route is needed to generate.</dd><dt>Interrupted</dt><dd>Recover workers, allocate/check the route and start a new request. Previous KV state is not resumed.</dd></dl><p>The portal cannot measure worker memory or relay paths. Model weights and credentials stay on your computer. Participating workers can inspect their inference data.</p><p><a href="https://github.com/devdil/sangama/blob/main/docs/admitted-mesh.md">Full node configuration and setup guide</a></p>"#,
     )
@@ -188,7 +147,7 @@ async fn connect() -> Html<String> {
 async fn about() -> Html<String> {
     page(
         "How it works",
-        r#"<p class="eyebrow">HOW IT WORKS</p><h1>One model. Several computers.</h1><ol><li><strong>Register.</strong> Introduce your device using an invitation.</li><li><strong>Connect privately.</strong> Use a scoped invitation and the pinned authority public key. Your worker signs a one-time challenge to join. Expired or revoked memberships lose access.</li><li><strong>Discover.</strong> A bootstrap node introduces peers. The distributed hash table helps them find signed model advertisements.</li><li><strong>Run a shard.</strong> Each configured worker loads its assigned part of the model. Requests pass through workers in layer order.</li></ol><h2>What this portal does</h2><p>It keeps an invitation-based device directory. The directory alone does not grant access. The membership service verifies peer-key ownership and authorizes a worker, client, or relay role for 24 hours. It does not prove physical device ownership or show live worker availability.</p><h2>What stays on your computer</h2><p>Your local worker holds its model shard and runs inference. Only contribute with people you trust: encrypted connections do not make an untrusted inference peer safe for private prompts.</p><p><a href="/join">Register a device →</a></p>"#,
+        r#"<p class="eyebrow">HOW IT WORKS</p><h1>One model. Several computers.</h1><ol><li><strong>Register.</strong> Create an account using an invitation.</li><li><strong>Connect privately.</strong> Use a scoped invitation and the pinned authority public key. Your worker signs a one-time challenge to join. Expired or revoked memberships lose access.</li><li><strong>Discover.</strong> A bootstrap node introduces peers. The distributed hash table helps them find signed model advertisements.</li><li><strong>Run a shard.</strong> Each configured worker loads its assigned part of the model. Requests pass through workers in layer order.</li></ol><h2>What this portal does</h2><p>It provides invite-only accounts and a device directory. The directory alone does not grant access. The membership service verifies peer-key ownership and authorizes a worker, client, or relay role for 24 hours. It does not prove physical device ownership or show live worker availability.</p><h2>What stays on your computer</h2><p>Your local worker holds its model shard and runs inference. Only contribute with people you trust: encrypted connections do not make an untrusted inference peer safe for private prompts.</p><p><a href="/join">Register a device →</a></p>"#,
     )
 }
 async fn health(State(app): State<App>) -> Response {
@@ -346,7 +305,10 @@ async fn main() -> Result<()> {
     };
     let router = Router::new()
         .route("/", get(index))
-        .route("/join", get(join).post(register))
+        .route("/join", get(accounts::signup_form).post(accounts::signup))
+        .route("/signin", get(accounts::signin_form).post(accounts::signin))
+        .route("/account", get(accounts::account))
+        .route("/signout", axum::routing::post(accounts::signout))
         .route("/about", get(about))
         .route("/connect", get(connect))
         .route("/admin", get(admin::form).post(admin::submit))
@@ -383,22 +345,5 @@ mod tests {
     #[test]
     fn escapes_user_content() {
         assert_eq!(escape("<script>&\"'"), "&lt;script&gt;&amp;&quot;&#39;");
-    }
-    #[test]
-    fn requires_consent_and_bounded_values() {
-        let mut f = Registration {
-            name: "My Mac".into(),
-            peer_id: "a".repeat(52),
-            platform: "macOS".into(),
-            memory_gib: 24,
-            invitation: "a".repeat(64),
-            consent: Some("yes".into()),
-        };
-        assert!(valid(&f));
-        f.consent = None;
-        assert!(!valid(&f));
-        f.consent = Some("yes".into());
-        f.memory_gib = -1;
-        assert!(!valid(&f));
     }
 }
