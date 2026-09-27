@@ -15,6 +15,8 @@ New to the subject? Start with [LLM and P2P fundamentals](docs/fundamentals.md),
 
 ## UI and distributed discovery
 
+See [the network UI workflow](docs/network-ui.md) for portal invitations/revocation and local capacity, placement and readiness controls.
+
 ```sh
 ./scripts/cargo run --release --locked --features metal -- ui --device metal
 ```

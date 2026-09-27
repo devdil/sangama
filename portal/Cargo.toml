@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+subtle = "2.6"
 sangama-network-auth = { path = "../crates/network-auth" }
 anyhow = "1"
 axum = "0.8"

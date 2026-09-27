@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "checks": [
+    "operator credential required",
+    "cross-origin admin POST rejected",
+    "role validation",
+    "invitation persisted as hash",
+    "authenticated membership listing",
+    "credential not reflected",
+    "revocation confirmation required",
+    "revocation persisted and displayed",
+    "connection setup page",
+    "operator request rate limit"
+  ],
+  "scope": "Local Docker portal and PostgreSQL; temporary membership/invitation rows removed."
+}

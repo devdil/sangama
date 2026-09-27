@@ -4,7 +4,7 @@ let key = /^[a-f0-9]{64}$/.test(location.hash.slice(1)) ? location.hash.slice(1)
 if (key) { sessionStorage.setItem('sangama-ui-key', key); history.replaceState(null, '', '/'); }
 key ||= sessionStorage.getItem('sangama-ui-key') || '';
 const operation = () => $('operation').value;
-let mode = 'local', config = null, report = null, busy = false, pending = false;
+let mode = 'local', config = null, report = null, busy = false, pending = false, readyPeers = [];
 const notice = message => { $('notice').textContent = message; $('notice').hidden = !message; };
 async function api(path, options = {}) {
   const response = await fetch(path, {...options, headers:{'x-ui-key':key, ...options.headers}});
@@ -20,17 +20,18 @@ function setMode(value) {
     $(id+'-mode').classList.toggle('selected', selected);
     $(id+'-mode').setAttribute('aria-pressed', selected);
   });
-  $('peer-a').textContent = mode === 'local' ? 'Auto-assigned localhost' : config?.peers[0] || 'Not configured';
-  $('peer-b').textContent = mode === 'local' ? 'Auto-assigned localhost' : config?.peers[1] || 'Not configured';
+  $('peer-a').textContent = mode === 'local' ? 'Auto-assigned localhost' : readyPeers[0] || 'Route not checked';
+  $('peer-b').textContent = mode === 'local' ? 'Auto-assigned localhost' : readyPeers[1] || 'Route not checked';
   $('mode-hint').textContent = mode === 'local'
     ? 'Both shard workers run on this computer. The client does not load a full model during generation.'
-    : 'Start with --peers and --token-file to connect approved SSH tunnel endpoints. Physical locations are not verified by this app.';
+    : 'Start with --peers and --token-file to connect configured admitted-mesh bridges or private SSH endpoints. Physical locations are not verified by this app.';
   updateButton();
 }
 function updateButton() {
   $('run').disabled = !config?.model_ready || busy || pending || (mode === 'peers' && !config?.peer_enabled);
   $('run').textContent = busy || pending ? 'Working…' : operation() === 'verify' ? 'Run verification ↗' : 'Generate text ↗';
   $('operation').disabled = busy || pending;
+  ['mesh-plan','mesh-allocate'].forEach(id => { $(id).disabled = busy || pending || !config?.peer_enabled; });
   $('decode-note').textContent = operation() === 'verify' ? 'Same prompt, both routes' : 'No local baseline required';
   $('task-note').textContent = operation() === 'verify' ? 'Loads the full baseline first, then checks the split model.' : 'Loads only assigned shards in workers. Remote mode needs only client metadata.';
   $('local-mode').disabled = busy; $('peer-mode').disabled = busy;
@@ -45,6 +46,12 @@ function render(data) {
   $('device').textContent = data.device === 'metal' ? 'Apple Metal' : 'CPU backend';
   $('phase').textContent = ({idle:'Ready',running:'Running',complete:'Complete',error:'Failed'})[data.job.phase] || data.job.phase;
   $('output').classList.toggle('running', busy);
+  if (['allocate','plan'].includes(data.job.operation)) {
+    readyPeers = data.job.plan?.peers || [];
+    if (mode === 'peers') { $('peer-a').textContent=readyPeers[0] || 'Route not checked'; $('peer-b').textContent=readyPeers[1] || 'Route not checked'; }
+    $('mesh-message').textContent = busy ? (data.job.operation === 'allocate' ? 'Reserving workers, loading prepared shards and checking readiness…' : 'Checking the complete model route…') : data.job.phase === 'error' ? `Operation failed: ${data.job.error}. Check workers and retry; abandoned leases expire.` : `Ready route: ${data.job.plan.peers.join(' → ')}. Inference will reserve and recheck workers.`;
+    updateButton(); return;
+  }
   if (busy) {
     report = null; $('download').disabled = true;
     $('output').classList.remove('has-text');
@@ -60,7 +67,7 @@ function render(data) {
     $('verification').textContent = report.operation === 'generate' ? `Generated · ${report.finish_reason === 'eos' ? 'end of response' : 'token limit reached'} · not baseline-verified` : report.passed ? `✓ Tokens match · Max logit error ${report.maximum_logit_absolute_error}` : '✕ Verification mismatch — inspect the report';
   } else if (data.job.phase === 'error') {
     $('output').textContent = data.job.error; $('output').classList.add('has-text');
-    $('verification').textContent='✕ Test did not complete'; $('verification').className='verification failed';
+    $('verification').textContent='✕ Request interrupted. Recover workers, allocate/check the route, then generate again as a new session. Previous KV state is not resumed.'; $('verification').className='verification failed';
   }
   updateButton();
 }
@@ -82,7 +89,8 @@ async function refresh() {
   try { render(await api('/api/status')); notice(config.model_ready ? '' : 'Prepare the pinned checkpoint first: python3 scripts/fetch-qwen.py'); }
   catch(error) { notice(error.message); config=null; updateButton(); }
 }
-async function poll() { await refresh(); await refreshDht(); setTimeout(poll,1500); }
+let meshPollAt = 0;
+async function poll() { await refresh(); await refreshDht(); if (Date.now() - meshPollAt > 10000) { await refreshMesh(); meshPollAt = Date.now(); } setTimeout(poll,1500); }
 
 let nodeAddress = '';
 async function refreshDht() {
@@ -115,3 +123,34 @@ $('publish-shard').onclick=()=>{const [start,end]=$('shard-range').value.split('
 $('find-providers').onclick=()=>dhtAction($('find-providers'),{action:'find',model_hash:$('model-hash').value.trim()});
 
 poll();
+
+async function refreshMesh() {
+  try {
+    const state = await api('/api/mesh');
+    $('mesh-workers').replaceChildren();
+    for (const worker of state.workers) {
+      const row = document.createElement('tr');
+      const capacity = worker.capacity, info = worker.info;
+      const values = [
+        worker.address + ((capacity?.peer || worker.mesh?.peer) ? ` / ${capacity?.peer || worker.mesh.peer}` : ''),
+        info ? (info.busy ? 'Loaded · busy' : 'Loaded · responds; route check required') : capacity ? (capacity.busy ? 'Placement busy' : 'Reachable · unloaded') : 'Unavailable / access denied',
+        capacity ? `${(capacity.budget_bytes / 1073741824).toFixed(2)} GiB budget / ${(capacity.available_bytes / 1073741824).toFixed(2)} GiB available` : info?.memory ? `${(info.memory.budget_bytes / 1073741824).toFixed(2)} GiB at load` : 'Not reported',
+        info ? `${info.shard.index}: layers ${info.shard.start}–${info.shard.end-1}` : capacity ? `Prepared: ${capacity.shards.map(s => s.index).join(', ')}` : 'Unknown',
+        `${worker.probe_ms.toFixed(1)} ms (combined checks)`, worker.mesh ? `${worker.mesh.admitted ? 'Admitted' : 'Not admitted / snapshot expired'}; ${worker.mesh.paths.join(' + ') || 'no active connection'}; membership expires ${worker.mesh.member_expires ? new Date(worker.mesh.member_expires*1000).toLocaleString() : 'unknown'}` : 'Path and membership not reported by bridge'
+      ];
+      for (const value of values) { const cell = document.createElement('td'); cell.textContent = value; row.append(cell); }
+      $('mesh-workers').append(row);
+    }
+    $('mesh-state').textContent = `${state.workers.filter(w => w.reachable).length}/${state.workers.length} reachable · checked ${new Date(state.checked_at*1000).toLocaleTimeString()}`;
+    if (!state.workers.length) $('mesh-message').textContent = 'No candidate bridges configured. Restart the local UI with --peers and --token-file to manage remote workers.';
+  } catch(error) { $('mesh-state').textContent='Status unavailable'; $('mesh-message').textContent=error.message; }
+}
+$('mesh-refresh').onclick = refreshMesh;
+for (const action of ['plan','allocate']) {
+  $('mesh-'+action).onclick = async () => {
+    pending=true; updateButton();
+    try { await api('/api/mesh',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action})}); await refresh(); }
+    catch(error) { $('mesh-message').textContent=error.message; }
+    finally { pending=false; updateButton(); }
+  };
+}

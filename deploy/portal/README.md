@@ -92,3 +92,13 @@ The portal fails closed on DB loss and Docker restarts it. Public forms have sam
 body limit, bounded concurrent handlers, parameterized SQL, escaped output, no JavaScript, and restrictive CSP.
 Peer identifiers are private in the portal; device names/specifications are public only with explicit consent.
 There are no user accounts, automated emails, device ownership proofs, or public inference APIs in this release.
+
+### Browser operator controls
+
+The classic HTML `/admin` form uses a separate `ADMIN_TOKEN_FILE` credential.
+Run `prepare-secrets.py` on upgrades to generate the new named `admin_token`
+secret before `docker compose up`. The form can issue scoped network/directory
+invitations, inspect membership expiry and revoke a peer. No operator browser
+session is stored. See [the UI workflow](../../docs/network-ui.md) for credential
+handling, limitations and local tests. Worker onboarding remains a local signed
+challenge; do not upload private peer keys to the portal.

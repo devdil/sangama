@@ -105,6 +105,7 @@ enum Command {
     Membership(SignedSnapshot),
     Offer(crate::qwen::network::Info),
     Discover(oneshot::Sender<Reply>),
+    Status(PeerId, oneshot::Sender<Reply>),
 }
 #[derive(Clone)]
 struct Proxy {
@@ -143,9 +144,17 @@ async fn proxy(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let path = uri.path();
-    if path == "/v1/mesh/offers" && method == Method::GET && uri.query().is_none() {
+    if ["/v1/mesh/offers", "/v1/mesh/status"].contains(&path)
+        && method == Method::GET
+        && uri.query().is_none()
+    {
         let (tx, rx) = oneshot::channel();
-        if s.tx.try_send(Command::Discover(tx)).is_err() {
+        let command = if path.ends_with("status") {
+            Command::Status(s.peer, tx)
+        } else {
+            Command::Discover(tx)
+        };
+        if s.tx.try_send(command).is_err() {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
         return match tokio::time::timeout(Duration::from_secs(2), rx).await {
@@ -576,6 +585,7 @@ pub async fn run(path: &Path) -> Result<()> {
     let mut quota: HashMap<PeerId, (Instant, usize, usize)> = HashMap::new();
     let mut ad_quota: HashMap<PeerId, (Instant, usize)> = HashMap::new();
     let mut offers: HashMap<PeerId, crate::mesh_store::Offer> = HashMap::new();
+    let mut connections: HashMap<libp2p::swarm::ConnectionId, (PeerId, bool)> = HashMap::new();
     let mut search_tick = tokio::time::interval(Duration::from_secs(10));
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tracing::info!(peer=%me,role=own_role,"mesh started");
@@ -609,6 +619,12 @@ pub async fn run(path: &Path) -> Result<()> {
                 offers.retain(|p,o|allowed.contains(p) && o.expires>now());
             },
             Some(command)=rx.recv()=>match command {
+                Command::Status(peer,result)=>{
+                    let member=membership.snapshot.members.iter().find(|m|m.peer==peer.to_string());
+                    let paths: Vec<&str> = connections.values().filter(|(p,_)|*p==peer).map(|(_,relay)|if *relay {"relay"} else {"direct"}).collect();
+                    let body=serde_json::to_vec(&serde_json::json!({"peer":peer.to_string(),"admitted":allowed.contains(&me) && allowed.contains(&peer) && membership.snapshot.expires>now() && member.is_some_and(|m|m.expires>now()),"member_expires":member.map(|m|m.expires),"snapshot_expires":membership.snapshot.expires,"paths":paths}))?;
+                    let _=result.send(Reply {status:200,body});
+                },
                 Command::Discover(result)=>{
                     let body=serde_json::to_vec(&offers.values().collect::<Vec<_>>())?;
                     let _=result.send(if membership.snapshot.expires>now() && allowed.contains(&me) {Reply {status:200,body}} else {Reply::error(403,"Membership expired")});
@@ -630,7 +646,8 @@ pub async fn run(path: &Path) -> Result<()> {
             event=swarm.select_next_some()=>match event {
                 SwarmEvent::ListenerClosed {listener_id,..}=>{if relay_listener==Some(listener_id) {relay_listener=None;relay_retry=Instant::now();}},
                 SwarmEvent::NewListenAddr {address,..}=>tracing::info!(%address,"mesh listening"),
-                SwarmEvent::ConnectionEstablished {peer_id,endpoint,..}=>tracing::info!(peer=%peer_id,relayed=endpoint.is_relayed(),"peer connected"),
+                SwarmEvent::ConnectionEstablished {peer_id,connection_id,endpoint,..}=>{connections.insert(connection_id,(peer_id,endpoint.is_relayed()));tracing::info!(peer=%peer_id,relayed=endpoint.is_relayed(),"peer connected");},
+                SwarmEvent::ConnectionClosed {connection_id,..}=>{connections.remove(&connection_id);},
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {peer_id,info,..}))=>{
                     // Only admitted identities influence dial addresses. Forced-relay tests suppress direct upgrades.
                     if allowed.contains(&peer_id) && !c.force_relay {

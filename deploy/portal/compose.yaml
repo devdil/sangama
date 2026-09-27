@@ -33,8 +33,9 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/app_password
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN}
       MEMBERSHIP_KEY_FILE: /run/secrets/membership_key
+      ADMIN_TOKEN_FILE: /run/secrets/admin_token
       NETWORK_ID: ${NETWORK_ID:-sangama-private-v1}
-    secrets: [app_password, membership_key]
+    secrets: [app_password, membership_key, admin_token]
     networks: [database, application]
     read_only: true
     cap_drop: [ALL]
@@ -74,3 +75,6 @@ secrets:
 
   membership_key:
     file: ./secrets/membership_key
+
+  admin_token:
+    file: ./secrets/admin_token

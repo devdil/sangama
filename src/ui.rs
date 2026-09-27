@@ -36,6 +36,7 @@ pub async fn serve(
     dht: crate::dht::Handle,
 ) -> Result<()> {
     crate::security::loopback(listen)?;
+    anyhow::ensure!(peers.len() <= 32, "at most 32 candidate bridges");
     for peer in &peers {
         crate::security::loopback(*peer)?;
     }
@@ -105,6 +106,7 @@ fn router(app: App) -> Router {
         .route("/api/dht", get(dht_status).post(dht_command))
         .route("/api/status", get(status))
         .route("/api/run", post(run))
+        .route("/api/mesh", get(mesh_status).post(mesh_action))
         .layer(DefaultBodyLimit::max(20 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
         .with_state(app)
@@ -166,6 +168,95 @@ async fn status(State(app): State<App>) -> Json<Value> {
     )
 }
 
+async fn mesh_status(State(app): State<App>) -> Json<Value> {
+    let mut workers = Vec::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    // Only operator-configured loopback aliases are probed; the browser cannot supply targets.
+    let probes = app.peers.iter().map(|address| {
+        let client = client.clone();
+        let token = app.peer_token.clone().unwrap_or_default();
+        async move {
+            let start = std::time::Instant::now();
+            let capacity = client
+                .get(format!("http://{address}/v1/node/capacity"))
+                .bearer_auth(&token)
+                .send()
+                .await;
+            let capacity = match capacity {
+                Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+                _ => None,
+            };
+            let info = client
+                .get(format!("http://{address}/v1/qwen/info"))
+                .bearer_auth(&token)
+                .send()
+                .await;
+            let info = match info {
+                Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+                _ => None,
+            };
+            let probe_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let mesh = match client
+                .get(format!("http://{address}/v1/mesh/status"))
+                .bearer_auth(&token)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+                _ => None,
+            };
+            json!({"address":address,"capacity":capacity,"info":info,"mesh":mesh,
+                "probe_ms":probe_ms,"reachable":capacity.is_some() || info.is_some()})
+        }
+    });
+    workers.extend(futures::future::join_all(probes).await);
+    Json(json!({"workers":workers,"checked_at":sangama_network_auth::now()}))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MeshAction {
+    action: String,
+}
+async fn mesh_action(State(app): State<App>, Json(input): Json<MeshAction>) -> Response {
+    if !["allocate", "plan"].contains(&input.action.as_str()) || app.peers.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"Configure candidate --peers and --token-file; choose allocate or plan."}))).into_response();
+    }
+    let mut job = app.job.lock().await;
+    if job["phase"] == "running" {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error":"Another operation is running."})),
+        )
+            .into_response();
+    }
+    *job = json!({"phase":"running","operation":input.action});
+    drop(job);
+    tokio::spawn(async move {
+        let operation = input.action.clone();
+        let handle = tokio::spawn(async move {
+            let token = app.peer_token.as_deref().unwrap_or_default();
+            if input.action == "allocate" {
+                crate::mesh_allocate::allocate(&app.model_dir, &app.peers, token).await?;
+            }
+            crate::mesh_plan::probe(&app.model_dir, &app.peers, token).await
+        });
+        let result = match handle.await {
+            Ok(Ok(plan)) => json!({"phase":"complete","operation":operation,"plan":plan}),
+            Ok(Err(e)) => json!({"phase":"error","operation":operation,"error":e.to_string()}),
+            Err(_) => {
+                json!({"phase":"error","operation":operation,"error":"Placement task stopped; leases will expire. Check workers before retrying."})
+            }
+        };
+        *app.job.lock().await = result;
+    });
+    (StatusCode::ACCEPTED, Json(json!({"accepted":true}))).into_response()
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Run {
@@ -209,7 +300,7 @@ async fn run(State(app): State<App>, Json(input): Json<Run>) -> Response {
     *job = json!({"phase":"running","mode":input.mode,"prompt":input.prompt,"operation":input.operation});
     drop(job);
     tokio::spawn(async move {
-        let options = Options {
+        let mut options = Options {
             model_dir: app.model_dir,
             device: app.device,
             prompt: input.prompt,
@@ -225,6 +316,12 @@ async fn run(State(app): State<App>, Json(input): Json<Run>) -> Response {
         };
         // Keep a failed inference task from leaving the UI permanently busy.
         let outcome = tokio::spawn(async move {
+            if !options.peers.is_empty() {
+                options.peers =
+                    crate::mesh_plan::probe(&options.model_dir, &options.peers, &options.token)
+                        .await?
+                        .peers;
+            }
             if input.operation == "verify" {
                 runner::run(options).await
             } else {
@@ -310,6 +407,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let mesh_url = format!("{origin}/api/mesh");
+        assert_eq!(
+            client
+                .post(&mesh_url)
+                .json(&json!({"action":"allocate"}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .post(&mesh_url)
+                .header("x-ui-key", "test-ui-secret")
+                .header("origin", "https://evil.invalid")
+                .json(&json!({"action":"allocate"}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        let state: Value = client
+            .get(&mesh_url)
+            .header("x-ui-key", "test-ui-secret")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(state["workers"], json!([]));
+        assert_eq!(
+            client
+                .post(&mesh_url)
+                .header("x-ui-key", "test-ui-secret")
+                .header("origin", &origin)
+                .json(&json!({"action":"allocate"}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
         task.abort();
     }
 }

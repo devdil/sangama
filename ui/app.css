@@ -5,3 +5,6 @@
 .brand{font-size:26px}
 
 .operation{display:block;width:100%;margin:9px 0 19px;padding:10px;font-size:11px}
+
+/* Plain tables and controls for the admitted worker workflow. */
+#mesh{margin-bottom:24px}#mesh p{line-height:1.6}.mesh-actions{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}.mesh-actions button{padding:10px 14px;border:1px solid #9aaa9f;background:#fff;border-radius:3px;cursor:pointer}.mesh-actions button:disabled{opacity:.5;cursor:wait}.mesh-table{overflow:auto}#mesh table{width:100%;border-collapse:collapse;font-size:13px}#mesh th,#mesh td{text-align:left;padding:12px 8px;border-bottom:1px solid #dce2da;vertical-align:top}#mesh td:first-child{max-width:220px;overflow-wrap:anywhere}#mesh th{font-weight:600;background:#f5f6f2}

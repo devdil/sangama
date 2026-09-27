@@ -1,3 +1,4 @@
+mod admin;
 mod membership;
 use anyhow::{Context, Result, ensure};
 use axum::{
@@ -22,6 +23,7 @@ struct App {
     capacity: Arc<Semaphore>,
     authority: Option<Arc<sangama_network_auth::libp2p_identity::Keypair>>,
     network: String,
+    admin_token: Option<String>,
 }
 fn escape(value: &str) -> String {
     value
@@ -36,7 +38,7 @@ fn hash(value: &str) -> String {
 }
 fn page(title: &str, body: &str) -> Html<String> {
     Html(format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Sangama</title><link rel="stylesheet" href="/style.css"></head><body><div class="sheet"><header><a class="wordmark" href="/">संगम <span>Sangama</span></a><p>Computers working together.</p></header><nav aria-label="Main"><a href="/">Network directory</a><a href="/join">Register a device</a><a href="/about">How it works</a></nav><main>{}</main><footer>Sangama · Experimental peer-to-peer inference<br>Directory registration and network membership are separate. Membership verifies a peer key; it does not prove that a worker is online.</footer></div></body></html>"#,
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Sangama</title><link rel="stylesheet" href="/style.css"></head><body><div class="sheet"><header><a class="wordmark" href="/">संगम <span>Sangama</span></a><p>Computers working together.</p></header><nav aria-label="Main"><a href="/">Network directory</a><a href="/join">Register a device</a><a href="/connect">Connect a worker</a><a href="/about">How it works</a><a href="/admin">Operator</a></nav><main>{}</main><footer>Sangama · Experimental peer-to-peer inference<br>Directory registration and network membership are separate. Membership verifies a peer key; it does not prove that a worker is online.</footer></div></body></html>"#,
         escape(title),
         body
     ))
@@ -130,13 +132,13 @@ async fn index(State(app): State<App>) -> Response {
             escape(&status)
         ));
     }
-    body.push_str("</tbody></table></div><h2>Start small. Measure honestly.</h2><p>Sangama currently splits one supported Qwen model between workers. Invited peers can use an encrypted relay and a planner for ready Qwen shards. This is an experimental trusted network; arbitrary models and anonymous public participation are not supported.</p>");
+    body.push_str("</tbody></table></div><h2>Start small. Measure honestly.</h2><p>Sangama currently splits one supported Qwen model between workers. Invited peers can use an encrypted relay, memory-aware shard loading and readiness checks. Manage allocation and inference from your local UI. This is an experimental trusted network; arbitrary models and anonymous public participation are not supported.</p>");
     page("Network directory", &body).into_response()
 }
 async fn join() -> Html<String> {
     page(
         "Register a device",
-        r#"<p class="eyebrow">JOIN EARLY ACCESS</p><h1>Introduce your device.</h1><p>You need a single-use invitation from the network operator. Choose a public device name; it, your platform, and memory size appear in the directory. Do not include your name or address unless you want them public.</p><form action="/join" method="post"><label for="name">Public device name</label><input id="name" name="name" maxlength="80" required placeholder="e.g. Cedar MacBook"><label for="peer_id">Sangama peer ID</label><input id="peer_id" name="peer_id" minlength="32" maxlength="128" required autocomplete="off"><small>Copy the peer ID from your local Sangama node. It is stored privately for now; registration does not verify ownership.</small><label for="platform">Operating system</label><select id="platform" name="platform"><option>macOS</option><option>Linux</option><option>Windows</option><option>Other</option></select><label for="memory_gib">Memory you have available (GiB)</label><input id="memory_gib" name="memory_gib" type="number" min="1" max="4096" required><label for="invitation">Invitation code</label><input id="invitation" name="invitation" type="password" maxlength="64" required autocomplete="off"><small>Valid for 24 hours and one registration. Never enter a model-worker token here.</small><p><label class="check"><input type="checkbox" name="consent" value="yes" required> I agree to publish my device name, platform, and memory size.</label></p><button type="submit">Register device</button></form><p>Need an invitation? Ask the person who invited you to Sangama.</p>"#,
+        r#"<p class="eyebrow">JOIN EARLY ACCESS</p><h1>Introduce your device.</h1><p>You need a single-use invitation from the network operator. Choose a public device name; it, your platform, and memory size appear in the directory. Do not include your name or address unless you want them public.</p><form action="/join" method="post"><label for="name">Public device name</label><input id="name" name="name" maxlength="80" required placeholder="e.g. Cedar MacBook"><label for="peer_id">Sangama peer ID</label><input id="peer_id" name="peer_id" minlength="32" maxlength="128" required autocomplete="off"><small>Copy the peer ID from your local Sangama node. Registration does not verify ownership. Admitted peer IDs, roles and expiry are published in membership snapshots.</small><label for="platform">Operating system</label><select id="platform" name="platform"><option>macOS</option><option>Linux</option><option>Windows</option><option>Other</option></select><label for="memory_gib">Memory you have available (GiB)</label><input id="memory_gib" name="memory_gib" type="number" min="1" max="4096" required><label for="invitation">Invitation code</label><input id="invitation" name="invitation" type="password" maxlength="64" required autocomplete="off"><small>Valid for 24 hours and one registration. Never enter a model-worker token here.</small><p><label class="check"><input type="checkbox" name="consent" value="yes" required> I agree to publish my device name, platform, and memory size.</label></p><button type="submit">Register device</button></form><p>Need an invitation? Ask the person who invited you to Sangama.</p>"#,
     )
 }
 #[derive(Deserialize)]
@@ -174,6 +176,14 @@ async fn register(State(app): State<App>, Form(form): Form<Registration>) -> Res
         Err(e) if e.code()==Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)=>failure(StatusCode::CONFLICT,"This device is already registered."),
         Err(_)=>failure(StatusCode::SERVICE_UNAVAILABLE,"Registration is temporarily unavailable. Please try again."),
     }
+}
+async fn connect() -> Html<String> {
+    page(
+        "Connect a worker",
+        r#"<h1>Connect your worker</h1><p>Directory registration and cryptographic admission use different invitations. Request a network invitation with the worker role, the authority public key through a trusted channel, a relay address and your node configuration from the operator.</p><ol><li>Build Sangama and prepare the supported Qwen shard files locally.</li><li>Create a persistent identity. Share only the peer ID/public key with the operator.</li><li>Save your network invitation to a private file (0600), then redeem it locally. Your worker signs the challenge; never upload its private key here.</li><li>Start the managed node. It begins unloaded; the local inference UI can allocate prepared shards and check readiness.</li></ol><pre>target/release/sangama mesh-identity --state-dir .mesh/worker
+ target/release/sangama mesh-join --config worker.json --invitation-file /path/to/private-invitation
+ python3 scripts/mesh-node.py --config worker.json</pre><h2>Understand your status</h2><dl><dt>Registered</dt><dd>A directory entry exists; no network access is implied.</dd><dt>Admitted</dt><dd>A peer key has valid scoped membership. It may still be offline.</dd><dt>Reachable / loaded / ready</dt><dd>Checked by your local UI against configured bridges. A complete verified route is needed to generate.</dd><dt>Interrupted</dt><dd>Recover workers, allocate/check the route and start a new request. Previous KV state is not resumed.</dd></dl><p>The portal cannot measure worker memory or relay paths. Model weights and credentials stay on your computer. Participating workers can inspect their inference data.</p><p><a href="https://github.com/devdil/sangama/blob/main/docs/admitted-mesh.md">Full node configuration and setup guide</a></p>"#,
+    )
 }
 async fn about() -> Html<String> {
     page(
@@ -321,12 +331,25 @@ async fn main() -> Result<()> {
         host,
         capacity: Arc::new(Semaphore::new(16)),
         authority,
+        admin_token: env::var("ADMIN_TOKEN_FILE")
+            .ok()
+            .map(|path| -> Result<String> {
+                let token = std::fs::read_to_string(path)?.trim().to_owned();
+                ensure!(
+                    token.len() == 64 && token.bytes().all(|c| c.is_ascii_hexdigit()),
+                    "admin credential must be 32 random bytes encoded as hex"
+                );
+                Ok(token)
+            })
+            .transpose()?,
         network: env::var("NETWORK_ID").unwrap_or_else(|_| "sangama-private-v1".into()),
     };
     let router = Router::new()
         .route("/", get(index))
         .route("/join", get(join).post(register))
         .route("/about", get(about))
+        .route("/connect", get(connect))
+        .route("/admin", get(admin::form).post(admin::submit))
         .route("/healthz", get(health))
         .route(
             "/v1/membership/challenge",

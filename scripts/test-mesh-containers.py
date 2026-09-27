@@ -169,6 +169,45 @@ def main():
         baseline=generate();report['generation']=baseline
         reference=json.loads((ROOT/'docs/test-results/qwen-metal-final.json').read_text())
         assert baseline['distributed_token_ids']==reference['local_token_ids'];checks['real_qwen_matches_independent_baseline']=True
+        # Exercise the protected UI endpoints against real admitted relay workers.
+        ui_test = r"""
+import subprocess,time,re,urllib.request,urllib.error,json
+p=subprocess.Popen(['sangama','--token-file','/state/token','ui','--listen','127.0.0.1:8088','--model-dir','/model','--device','cpu','--dht-dir','/state/ui','--peers','127.0.0.1:7902,127.0.0.1:7901'],stdout=open('/state/ui.log','w'),stderr=subprocess.STDOUT)
+try:
+ for _ in range(60):
+  text=open('/state/ui.log').read();m=re.search(r'http://127.0.0.1:8088#([a-f0-9]{64})',text)
+  if m:break
+  time.sleep(.5)
+ else:raise AssertionError('UI did not start')
+ key=m.group(1)
+ def request(path,body=None,auth=True,origin='http://127.0.0.1:8088'):
+  headers={'Origin':origin,'Content-Type':'application/json'}
+  if auth:headers['x-ui-key']=key
+  req=urllib.request.Request('http://127.0.0.1:8088'+path,data=json.dumps(body).encode() if body is not None else None,headers=headers)
+  try:
+   with urllib.request.urlopen(req,timeout=15) as r:return r.status,json.load(r)
+  except urllib.error.HTTPError as e:return e.code,None
+ assert request('/api/mesh',{'action':'allocate'},auth=False)[0]==401
+ assert request('/api/mesh',{'action':'allocate'},origin='https://evil.invalid')[0]==403
+ state=request('/api/mesh')[1]
+ assert len(state['workers'])==2 and all(w['reachable'] and w['mesh']['admitted'] and 'relay' in w['mesh']['paths'] for w in state['workers'])
+ def complete():
+  for _ in range(120):
+   job=request('/api/status')[1]['job']
+   if job['phase']!='running':return job
+   time.sleep(.5)
+  raise AssertionError('UI job timeout')
+ assert request('/api/mesh',{'action':'allocate'})[0]==202
+ job=complete();assert job['phase']=='complete' and job['plan']['peers']==['127.0.0.1:7901','127.0.0.1:7902'],job
+ assert request('/api/run',{'prompt':'Explain peer-to-peer computing in one short sentence.','max_tokens':20,'mode':'peers','operation':'generate'})[0]==202
+ job=complete();assert job['phase']=='complete',job
+ print(json.dumps({'tokens':job['report']['distributed_token_ids'],'checks':['UI authentication','cross-origin placement rejection','live relay and admission telemetry','UI allocation and route sorting','UI real generation']}))
+finally:
+ p.terminate();p.wait(timeout=10)
+"""
+        ui_result=json.loads(execpy(names['client'],ui_test).stdout)
+        assert ui_result['tokens']==baseline['distributed_token_ids']
+        report['ui']=ui_result;checks['protected_ui_allocation_telemetry_and_real_generation']=True
         # netem runs in a short-lived helper sharing only the worker network namespace.
         # Inference containers retain cap-drop=ALL and a non-root UID.
         for role in ['worker0','worker1']:
