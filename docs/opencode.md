@@ -7,7 +7,7 @@ file edits are disabled; the gateway rejects tool requests. The current 0.5B mod
 normal coding work. A correct response to an explicit addition fix and an incorrect response to a less explicit
 version of the same task are both retained in the test evidence.
 
-## Run on this Mac
+## Run on an Apple Silicon Mac
 
 From the Sangama repository:
 
@@ -17,7 +17,7 @@ From the Sangama repository:
 python3 scripts/opencode.py
 ```
 
-OpenCode 1.18.32 is already installed locally for the recorded test. The installer pins npm dependencies with
+The installer installs the pinned OpenCode 1.18.32 client. It pins npm dependencies with
 a lockfile, skips dependency lifecycle scripts, and then runs the reviewed upstream binary installer.
 It installs under `.tools/opencode`, without changing global packages or shell configuration.
 The Rust build needs the prepared Qwen checkpoint to run; use `python3 scripts/fetch-qwen.py` if it is missing.
@@ -88,7 +88,7 @@ python3 scripts/test-chat-api.py
 # Stop serve-only with Ctrl-C.
 ```
 
-Recorded tests on 2026-09-27 used the actual pinned model and two Metal worker processes on the M5 Pro.
+Recorded tests on 2026-09-27 used the actual pinned model and two Metal worker processes on one Apple Silicon host.
 API tests cover authentication, Host/Origin restrictions, unsupported requests, JSON/SSE parity, a 694-token
 prompt spanning multiple prefill chunks, and conversation recall. The OpenCode test parses the returned
 Python suggestion and checks `return a + b` without executing model-generated code. This demonstrates the

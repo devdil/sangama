@@ -1,6 +1,6 @@
 # Recorded validation
 
-Local runs on Apple M5 Pro (24 GB). All nodes/workers ran on one physical computer.
+Local runs on an Apple Silicon host. All nodes/workers ran on one physical computer.
 
 - `dht-process-test.json`: three independent processes; seeker discovers a signed provider through bootstrap only. The all-`a` hash is a synthetic discovery key, not a checkpoint.
 - `ui-dht-test.json`: browser joined another node, advertised a locally verified Qwen shard, found the remote process's signed advertisement, and ran actual Qwen inference with matching tokens/logits.

@@ -74,7 +74,7 @@ Both scripts use unique resource names and never push images or Git commits to a
 
 ## Recorded run — 2026-09-27
 
-Passed on an M5 Pro host, Docker Desktop Linux ARM64, approximately 8 GB VM memory.
+Passed on an Apple Silicon host with Docker Desktop Linux ARM64 and approximately 8 GB VM memory.
 Three inference containers produced 20 tokens (including EOS), matching every token in the recorded
 independent Metal baseline. The follow-up arithmetic prompt returned `4`. Incorrect bearer authentication
 returned HTTP 401. Container inspection confirmed separate network namespaces, exact read-only model

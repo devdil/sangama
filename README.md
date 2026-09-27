@@ -31,7 +31,7 @@ peer inference transport, memory-aware loading of prepared shards, ready-route p
 ## Generate text without a full local model
 
 ```sh
-cd /Users/diljit/Documents/Projects/p2p-inference
+cd /path/to/sangama
 python3 scripts/fetch-qwen.py
 ./scripts/cargo run --release --locked --features metal -- generate --device metal --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/generation.json
 ```
@@ -95,11 +95,11 @@ The fixture runs deterministic CPU residual matrices. It reports passes/second, 
 
 ### Run the fixture
 
-On this Mac, a Rust toolchain is installed in `.tools/`. The wrapper uses it without changing your shell settings.
-On other machines, install stable Rust using [rustup](https://rustup.rs/); the same wrapper uses system Cargo if no local toolchain exists.
+Install stable Rust using [rustup](https://rustup.rs/). The `scripts/cargo` wrapper uses system Cargo
+unless an isolated toolchain exists in `.tools/`. Run the following commands from your repository checkout.
 
 ```sh
-cd /Users/diljit/Documents/Projects/p2p-inference
+cd /path/to/sangama
 ./scripts/cargo run --release -- doctor
 ./scripts/cargo run --release -- demo
 ```

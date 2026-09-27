@@ -1,7 +1,7 @@
 # Secure two-person Qwen test, including Internet peers
 
 This is a controlled test between trusted people, not a production/public volunteer service.
-The source is in `/Users/diljit/Documents/Projects/p2p-inference`. Do not publish credentials.
+Run commands from your Sangama repository checkout. Do not publish credentials.
 Only the real Qwen commands described here are hardened for this workflow; the older numerical
 fixture coordinator/worker commands are separate development tools and must not be exposed.
 
