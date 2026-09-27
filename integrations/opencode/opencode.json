@@ -29,7 +29,7 @@
           "temperature": true,
           "limit": {
             "context": 4096,
-            "output": 128
+            "output": 512
           }
         }
       }
@@ -39,7 +39,7 @@
     "sangama": {
       "description": "Text-only coding suggestions from Sangama's small test model",
       "mode": "primary",
-      "prompt": "You are a concise coding assistant. Explain code and suggest corrected code when asked. You cannot use tools or edit files. Keep answers short.",
+      "prompt": "You are a helpful coding assistant. When asked for code or a script, write it in full in your reply; the user will copy and run it. Also explain code and suggest fixes. Keep answers focused.",
       "temperature": 0,
       "steps": 3,
       "permission": {

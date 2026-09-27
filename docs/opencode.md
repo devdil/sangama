@@ -82,7 +82,7 @@ select or authorize this inference route.
   the same workers expecting a shared scheduler; workers still support one active session.
 - Text messages with system/user/assistant roles; no images, tool messages, tool calls, structured output,
   custom stop sequences, or nonzero temperature. Deterministic greedy generation only.
-- 4,096-token total context including output, up to 64 messages, 128 output tokens maximum. No silent truncation.
+- 4,096-token total context including output, up to 64 messages, 512 output tokens maximum. No silent truncation.
   CLI `generate`/`qwen-test` retain their 512-input-token limit. Chat prefill uses chunks of at most 512 tokens.
 - SSE emits decoded text while inference runs, followed by finish reason, usage, and `[DONE]`. Failures after
   streaming headers are sent become an error event; earlier validation failures return HTTP errors.
