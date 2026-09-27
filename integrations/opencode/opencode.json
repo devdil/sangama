@@ -1,0 +1,56 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": [
+    "sangama"
+  ],
+  "model": "sangama/qwen2.5-0.5b-instruct",
+  "small_model": "sangama/qwen2.5-0.5b-instruct",
+  "default_agent": "sangama",
+  "share": "disabled",
+  "autoupdate": false,
+  "permission": {
+    "*": "deny"
+  },
+  "compaction": {
+    "auto": false
+  },
+  "provider": {
+    "sangama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Sangama peers",
+      "options": {
+        "baseURL": "http://127.0.0.1:8090/v1",
+        "apiKey": "{env:SANGAMA_API_KEY}"
+      },
+      "models": {
+        "qwen2.5-0.5b-instruct": {
+          "name": "Qwen 0.5B \u00b7 Sangama distributed test",
+          "tool_call": false,
+          "temperature": true,
+          "limit": {
+            "context": 4096,
+            "output": 128
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "sangama": {
+      "description": "Text-only coding suggestions from Sangama's small test model",
+      "mode": "primary",
+      "prompt": "You are a concise coding assistant. Explain code and suggest corrected code when asked. You cannot use tools or edit files. Keep answers short.",
+      "temperature": 0,
+      "steps": 3,
+      "permission": {
+        "*": "deny"
+      }
+    },
+    "title": {
+      "disable": true
+    },
+    "summary": {
+      "disable": true
+    }
+  }
+}

@@ -43,6 +43,20 @@ impl ModelArgs {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Serve a localhost text-chat API for OpenCode, using existing shard workers.
+    ChatApi {
+        #[arg(long, default_value = "127.0.0.1:8090")]
+        listen: SocketAddr,
+        #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
+        model_dir: PathBuf,
+        #[arg(long, default_value = "metal", value_parser = ["cpu", "metal"])]
+        device: String,
+        #[arg(long, value_delimiter = ',', required = true)]
+        peers: Vec<SocketAddr>,
+        /// Separate client credential; never give OpenCode the worker token.
+        #[arg(long)]
+        api_token_file: PathBuf,
+    },
     /// Run a persistent encrypted Kademlia discovery node.
     DhtNode {
         #[arg(long, default_value = ".mesh/node")]
@@ -234,6 +248,23 @@ async fn main() -> Result<()> {
         cli.token = Some(sangama::security::read_token(path)?);
     }
     match cli.command {
+        Command::ChatApi {
+            listen,
+            model_dir,
+            device,
+            peers,
+            api_token_file,
+        } => {
+            sangama::chat_api::serve(
+                listen,
+                model_dir,
+                device,
+                peers,
+                token(cli.token)?,
+                sangama::security::read_token(&api_token_file)?,
+            )
+            .await?;
+        }
         Command::DhtNode {
             state_dir,
             listen,

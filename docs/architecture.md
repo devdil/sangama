@@ -18,7 +18,7 @@ F32 operations on Metal or CPU. Original BF16 tensors are converted at load time
 Weights remain resident. One conversation is admitted per worker, with a 60-second idle lease.
 Prefill uses a causal mask; decoding appends to cached keys/values. Warmup is followed by cache reset.
 The binary frame has a bounded JSON metadata header and little-endian F32 tensor data, a 4 MiB total cap,
-and finite-value/shape validation. Context is capped at 1,024 tokens, prompts at 512, generation at 128.
+and finite-value/shape validation. Context is capped at 4,096 tokens; CLI prompts remain capped at 512 and generation at 128. The text-chat API uses prefill chunks of at most 512 tokens for longer conversations.
 The current real-model route is explicit and does not use the fixture's placement coordinator.
 
 The endpoint embedding matrix is duplicated because weights are tied; shard sizes are about 630 MB each

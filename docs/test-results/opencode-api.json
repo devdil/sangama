@@ -1,0 +1,78 @@
+{
+  "passed": true,
+  "checks": [
+    "authenticated model listing",
+    "bad credentials rejected",
+    "browser Origin rejected",
+    "unexpected Host rejected",
+    "unsupported tools/options rejected",
+    "real JSON completion",
+    "SSE matches JSON",
+    "chunked prefill beyond 512 tokens",
+    "conversation history preserved"
+  ],
+  "arithmetic": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "4",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 1790487344,
+    "id": "chatcmpl-b3499c94-f37d-4c12-b2ba-b5016cfba3bb",
+    "model": "qwen2.5-0.5b-instruct",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 2,
+      "prompt_tokens": 22,
+      "total_tokens": 24
+    }
+  },
+  "long_context": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "4",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 1790487345,
+    "id": "chatcmpl-151245b1-3b2b-42eb-a028-f62d1eb3de28",
+    "model": "qwen2.5-0.5b-instruct",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 2,
+      "prompt_tokens": 694,
+      "total_tokens": 696
+    }
+  },
+  "conversation": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "17",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 1790487345,
+    "id": "chatcmpl-26652bd7-4feb-4f56-8135-ffe86ee69d2f",
+    "model": "qwen2.5-0.5b-instruct",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 47,
+      "total_tokens": 50
+    }
+  },
+  "stream_first_content_seconds": 0.1347227500000001
+}

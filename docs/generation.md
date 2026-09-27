@@ -30,7 +30,7 @@ Discovering a DHT advertisement does not activate a route automatically.
 
 The client still receives complete vocabulary logits for sampling. It does not yet stream text to the UI,
 sample on the final worker, automatically download weights, or automatically recover a failed worker.
-The current supported model and limits remain unchanged: pinned Qwen2.5-0.5B-Instruct, F32, 512 prompt tokens,
+The standalone generation command uses: pinned Qwen2.5-0.5B-Instruct, F32, 512 prompt tokens,
 128 generated tokens maximum, and one active session per worker.
 
 ## Honest reports
@@ -57,3 +57,5 @@ real workers, verifies session reuse, tests autostart from shards without a comp
 its token IDs with a separate full-model verification run. It stops its temporary workers on exit.
 The recorded Metal run generated 20 tokens with the same token IDs as the independent baseline.
 All processes were on one physical Mac; a two-computer test remains the next milestone.
+
+The OpenCode chat API separately supports conversation history with a 4,096-token total context budget and chunked prefill; see [OpenCode setup](opencode.md).

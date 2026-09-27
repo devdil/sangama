@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use candle::Tensor;
 use candle_transformers::models::qwen2::ModelForCausalLM;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     net::{SocketAddr, TcpListener},
     path::{Path, PathBuf},
@@ -25,6 +25,52 @@ pub struct Options {
     pub max_tokens: usize,
     pub peers: Vec<SocketAddr>,
     pub token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+pub fn format_chat(messages: &[ChatMessage]) -> Result<String> {
+    ensure!(
+        !messages.is_empty() && messages.len() <= 64,
+        "expected 1..64 messages"
+    );
+    let mut formatted = String::new();
+    for message in messages {
+        ensure!(
+            matches!(message.role.as_str(), "system" | "user" | "assistant"),
+            "unsupported message role"
+        );
+        ensure!(
+            !message.content.contains("<|im_") && !message.content.contains("<|endoftext|>"),
+            "chat control tokens are forbidden"
+        );
+        formatted.push_str(&format!(
+            "<|im_start|>{}\n{}<|im_end|>\n",
+            message.role, message.content
+        ));
+    }
+    ensure!(
+        messages.iter().any(|message| message.role == "user"),
+        "conversation must contain a user message"
+    );
+    ensure!(formatted.len() <= 128 * 1024, "conversation too large");
+    formatted.push_str("<|im_start|>assistant\n");
+    Ok(formatted)
+}
+
+/// Text-only chat through the same validated shard route. A closed stream cancels at the next token.
+pub async fn chat(
+    options: Options,
+    messages: Vec<ChatMessage>,
+    deltas: Option<tokio::sync::mpsc::Sender<String>>,
+) -> Result<Report> {
+    let formatted = format_chat(&messages)?;
+    execute_chat(options, false, Some(formatted), deltas).await
 }
 
 #[derive(Serialize)]
@@ -305,6 +351,15 @@ pub async fn generate(options: Options) -> Result<Report> {
 }
 
 async fn execute(options: Options, verify: bool) -> Result<Report> {
+    execute_chat(options, verify, None, None).await
+}
+
+async fn execute_chat(
+    options: Options,
+    verify: bool,
+    conversation: Option<String>,
+    deltas: Option<tokio::sync::mpsc::Sender<String>>,
+) -> Result<Report> {
     ensure!(
         (1..=128).contains(&options.max_tokens),
         "max-tokens must be 1..=128"
@@ -329,17 +384,18 @@ async fn execute(options: Options, verify: bool) -> Result<Report> {
     check_hash(&dir.join("tokenizer.json"), &manifest.tokenizer_sha256)?;
     let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json"))
         .map_err(|e| anyhow::anyhow!("tokenizer: {e}"))?;
-    let formatted = format!(
+    let is_chat = conversation.is_some();
+    let formatted = conversation.unwrap_or_else(|| format!(
         "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
         options.prompt
-    );
+    ));
     let prompt = tokenizer
         .encode(formatted, false)
         .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?
         .get_ids()
         .to_vec();
     ensure!(
-        prompt.len() <= 512 && prompt.len() + options.max_tokens <= CONTEXT_LIMIT,
+        (is_chat || prompt.len() <= 512) && prompt.len() + options.max_tokens <= CONTEXT_LIMIT,
         "prompt/context too long for this prototype"
     );
     let local = if verify {
@@ -410,6 +466,7 @@ async fn execute(options: Options, verify: bool) -> Result<Report> {
             .await?;
             reset(&http, &addresses, &options.token, &session).await?;
         }
+        let mut decoder = tokenizer.decode_stream(true);
         let mut ids = Vec::new();
         let mut times = Vec::new();
         let mut position = 0;
@@ -424,17 +481,36 @@ async fn execute(options: Options, verify: bool) -> Result<Report> {
                 &ids[ids.len() - 1..]
             };
             let now = Instant::now();
-            let result = step(
-                &http,
-                &options.token,
-                &request(&model_hash, &session, &route, context, position),
-            )
-            .await?;
+            let mut last = None;
+            for chunk in context.chunks(512) {
+                if let Some(sender) = &deltas {
+                    ensure!(!sender.is_closed(), "client disconnected");
+                }
+                last = Some(
+                    step(
+                        &http,
+                        &options.token,
+                        &request(&model_hash, &session, &route, chunk, position),
+                    )
+                    .await?,
+                );
+                position += chunk.len();
+            }
+            let result = last.context("empty context")?;
             let id = greedy(&result.values)?;
             times.push(now.elapsed().as_secs_f64() * 1000.0);
-            position += context.len();
             last_trace = result.header.trace;
             ids.push(id);
+            if let Some(sender) = &deltas
+                && let Some(delta) = decoder
+                    .step(id)
+                    .map_err(|e| anyhow::anyhow!("stream decode: {e}"))?
+            {
+                sender
+                    .send(delta)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("client disconnected"))?;
+            }
             if let Some(local) = &local {
                 for (got, expected) in result.values.iter().zip(&local.logits[index]) {
                     maximum_error = maximum_error.max((got - expected).abs());
@@ -509,7 +585,7 @@ async fn execute(options: Options, verify: bool) -> Result<Report> {
             "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
             "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for token selection and optional verification; final-worker sampling would avoid this traffic.",
             "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
-            "One active session per worker, 1024-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover.",
+            "One active session per worker, 4096-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover.",
         ],
     };
     drop(processes);

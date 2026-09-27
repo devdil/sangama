@@ -67,7 +67,7 @@ verification warms up and resets the prompt first. Their latency measurements ar
 
 For CPU, omit `--features metal` and use `--device cpu`. Python and curl are used only to prepare model files.
 The current test supports one active conversation per worker, greedy decoding, at most 512 prompt tokens,
-128 generated tokens, and a 1,024-token context cap. It does not yet support arbitrary Qwen/Kimi checkpoints.
+128 generated tokens, and a 4,096-token worker context cap. The chat API accepts longer prompts using 512-token chunks. It does not yet support arbitrary Qwen/Kimi checkpoints.
 
 ### Two physical devices, including Internet peers
 
@@ -223,3 +223,10 @@ Kimi/MoE support, encrypted peer identity, and public volunteer participation re
 See [the architecture plan](docs/architecture.md). Real-checkpoint tests are explicit commands, not part of CI;
 the automated Qwen test uses small random weights and verifies prefill, decode, and cache reset against upstream Candle.
 For Metal checks, add `--features metal` to the clippy and test commands above.
+
+## OpenCode with Sangama
+
+A local, text-only OpenCode integration now uses the real shard workers with streaming chat responses.
+Run `python3 scripts/opencode.py` after building Sangama and installing the pinned client with
+`./scripts/install-opencode.sh`. See [setup, tests, and current limits](docs/opencode.md).
+The 0.5B model is a connectivity/demo model; automatic tools and file edits are disabled.
