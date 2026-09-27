@@ -15,7 +15,9 @@ worker identity/range validation, bounded binary transport, greedy selection, an
 
 Use `--model-dir` to select the appropriate directory. For `generate --peers`, `--device` is the expected
 worker backend, not a request to load a model on the client. A CPU-only client build can request Metal workers.
-Workers are still explicitly configured, loopback-only, and token-authenticated; SSH tunnels carry remote traffic.
+Workers are loopback-only and token-authenticated. Remote traffic can use admitted encrypted mesh
+bridges or the older private SSH tunnel setup. Managed mesh workers can load prepared shards on request;
+see [mesh allocation](admitted-mesh.md#placement-reservations-and-opencode).
 Discovering a DHT advertisement does not activate a route automatically.
 
 ## Execution
@@ -23,13 +25,14 @@ Discovering a DHT advertisement does not activate a route automatically.
 1. Validate manifest/config/tokenizer hashes and the prompt/context limits.
 2. Start local shard processes or connect to the supplied authenticated workers.
 3. Check every worker's manifest hash, layer range, shard hash, precision, and backend.
-4. Send the prompt once for prefill. No separate warmup prompt runs in generation mode.
-5. Select the highest logit and send the selected token back for the next step.
+4. Reserve every worker, then send the prompt for prefill. No separate warmup prompt runs in generation mode.
+5. The final worker selects the highest logit and returns a token. Send that token for the next step.
 6. Stop at Qwen EOS or the requested token limit, then reset the session on workers.
 7. Return text, token IDs, finish reason, timing, and worker information.
 
-The client still receives complete vocabulary logits for sampling. It does not yet stream text to the UI,
-sample on the final worker, automatically download weights, or automatically recover a failed worker.
+Ordinary generation returns only the selected token from the tail worker; `qwen-test` receives complete
+vocabulary logits for verification. The standalone command does not stream text to the UI; the chat API
+supports streaming. It does not automatically download weights or resume a failed session.
 The standalone generation command uses: pinned Qwen2.5-0.5B-Instruct, F32, 512 prompt tokens,
 128 generated tokens maximum, and one active session per worker.
 

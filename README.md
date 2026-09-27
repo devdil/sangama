@@ -7,6 +7,12 @@ A Rust foundation for running model pieces across participating computers.
 **Status: real Qwen text generation works across separate Rust worker processes, using Candle on Metal or CPU.**
 The original deterministic numerical fixture remains available for networking tests.
 
+## Start contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, a first real-model run, a source map and validation commands.
+New to the subject? Start with [LLM and P2P fundamentals](docs/fundamentals.md), then follow
+[the architecture and request flow](docs/architecture.md).
+
 ## UI and distributed discovery
 
 ```sh
@@ -33,7 +39,7 @@ python3 scripts/fetch-qwen.py
 `generate` starts two shard workers and produces text without opening the original `model.safetensors`
 or loading an unsplit model on the client. Each worker loads its assigned shard and retains its own KV cache.
 The UI defaults to **Generate text · workers only**. This is greedy generation, with the completed result
-returned at the end; streaming display and final-worker token selection are not implemented yet.
+returned at the end. Token selection happens on the final worker; the separate chat API supports streaming responses.
 
 With `--peers`, the client needs only `manifest.json`, `config.json`, and `tokenizer.json` in `--model-dir`:
 
@@ -41,7 +47,8 @@ With `--peers`, the client needs only `manifest.json`, `config.json`, and `token
 ./target/release/sangama generate --device metal --model-dir path/to/client-metadata --peers 127.0.0.1:7901,127.0.0.1:7902 --token-file .secrets/peer.token --prompt 'Explain peer-to-peer computing in one short sentence.'
 ```
 
-Prepare the worker files and SSH tunnels using [the secure peer guide](docs/secure-peer-test.md).
+Prepare worker files and local peer aliases using [the admitted mesh guide](docs/admitted-mesh.md),
+or use SSH tunnels following [the secure peer guide](docs/secure-peer-test.md).
 Without `--peers`, the same directory must also contain all shard files for automatic local workers.
 `--device` selects the local worker backend, or the expected backend reported by existing workers;
 standalone clients do not initialize a GPU. The downloader prepares a complete checkpoint plus shards,
@@ -206,7 +213,9 @@ src/server.rs       Coordinator, workers, leases, authentication, direct forward
 src/planner.rs      Contiguous coverage and cost-based placement
 src/benchmark.rs    Baseline checking and timing reports
 tests/              Correctness, socket integration, and process integration
-docs/architecture.md  Current architecture and remaining milestones
+CONTRIBUTING.md     Contributor setup, checks and development workflow
+docs/fundamentals.md  LLM and peer-network concepts
+docs/architecture.md  Current architecture, source map and request lifecycle
 ```
 
 ## Development checks
