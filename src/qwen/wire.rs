@@ -25,12 +25,15 @@ pub enum Kind {
     Tokens,
     Hidden,
     Logits,
+    Sampled,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Header {
     pub protocol: u32,
+    #[serde(default)]
+    pub sample: bool,
     pub model_hash: String,
     pub session: String,
     pub position: usize,
@@ -47,6 +50,19 @@ pub struct Frame {
 }
 
 impl Frame {
+    pub fn valid_output(&self) -> bool {
+        if self.header.sample {
+            self.header.kind == Kind::Sampled
+                && self.values.is_empty()
+                && self.header.tokens.len() == 1
+                && self.header.tokens[0] < 151936
+        } else {
+            self.header.kind == Kind::Logits
+                && self.values.len() == 151936
+                && self.header.tokens.is_empty()
+        }
+    }
+
     pub fn encode(&self) -> Result<Vec<u8>> {
         let json = serde_json::to_vec(&self.header)?;
         ensure!(json.len() <= MAX_HEADER_BYTES, "header too large");
@@ -118,6 +134,7 @@ mod tests {
         Frame {
             header: Header {
                 protocol: 1,
+                sample: false,
                 model_hash: "a".into(),
                 session: "s".into(),
                 position: 0,

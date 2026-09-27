@@ -8,3 +8,11 @@ pub mod qwen;
 pub mod security;
 pub mod server;
 pub mod ui;
+
+pub mod managed_worker;
+pub mod mesh;
+pub mod mesh_allocate;
+pub mod mesh_plan;
+mod mesh_store;
+mod mesh_transport;
+pub mod resources;

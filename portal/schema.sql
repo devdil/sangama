@@ -14,3 +14,19 @@ CREATE TABLE IF NOT EXISTS registrations (
     invitation_id BIGINT NOT NULL UNIQUE REFERENCES invitations(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS network_invitations (
+    token_hash TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('worker','client','relay')),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
+    nonce TEXT,
+    nonce_expires TIMESTAMPTZ,
+    used_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS network_members (
+    peer_id TEXT PRIMARY KEY,
+    role TEXT NOT NULL CHECK (role IN ('worker','client','relay')),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
+    revoked BOOLEAN NOT NULL DEFAULT false,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

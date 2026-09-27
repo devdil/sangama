@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM rust:slim-bookworm AS build
-WORKDIR /app
+WORKDIR /app/portal
+COPY crates/network-auth /app/crates/network-auth
 COPY portal/Cargo.toml portal/Cargo.lock ./
 COPY portal/src ./src
 COPY portal/static ./static

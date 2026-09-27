@@ -41,7 +41,7 @@ assert register(fields|{'invitation':second})[0]==409
 assert register(fields|{'invitation':second,'name':'Birch Linux','platform':'Linux','peer_id':'12D3KooW'+uuid.uuid4().hex})[0]==201
 html=urllib.request.urlopen(BASE).read().decode()
 assert '&lt;script&gt;' in html and '<script>' not in html
-assert '2 registered' in html and 'Registered · unverified' in html
+assert '2 registered' in html and 'Registered · not admitted' in html
 role=run('exec','-T','postgres','psql','-U','postgres','-d','sangama','-Atc',"SELECT rolsuper FROM pg_roles WHERE rolname='sangama'").strip()
 assert role=='f'
 ids=run('ps','-q').splitlines()

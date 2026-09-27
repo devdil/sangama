@@ -1,3 +1,4 @@
+mod membership;
 use anyhow::{Context, Result, ensure};
 use axum::{
     Form, Router,
@@ -19,6 +20,8 @@ struct App {
     origin: String,
     host: String,
     capacity: Arc<Semaphore>,
+    authority: Option<Arc<sangama_network_auth::libp2p_identity::Keypair>>,
+    network: String,
 }
 fn escape(value: &str) -> String {
     value
@@ -33,7 +36,7 @@ fn hash(value: &str) -> String {
 }
 fn page(title: &str, body: &str) -> Html<String> {
     Html(format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Sangama</title><link rel="stylesheet" href="/style.css"></head><body><div class="sheet"><header><a class="wordmark" href="/">संगम <span>Sangama</span></a><p>Computers working together.</p></header><nav aria-label="Main"><a href="/">Network directory</a><a href="/join">Register a device</a><a href="/about">How it works</a></nav><main>{}</main><footer>Sangama · Experimental peer-to-peer inference<br>Registration is an introduction. Device ownership and availability are not yet verified.</footer></div></body></html>"#,
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{} · Sangama</title><link rel="stylesheet" href="/style.css"></head><body><div class="sheet"><header><a class="wordmark" href="/">संगम <span>Sangama</span></a><p>Computers working together.</p></header><nav aria-label="Main"><a href="/">Network directory</a><a href="/join">Register a device</a><a href="/about">How it works</a></nav><main>{}</main><footer>Sangama · Experimental peer-to-peer inference<br>Directory registration and network membership are separate. Membership verifies a peer key; it does not prove that a worker is online.</footer></div></body></html>"#,
         escape(title),
         body
     ))
@@ -45,7 +48,15 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
     if request.headers().get("host").and_then(|h| h.to_str().ok()) != Some(app.host.as_str()) {
         return failure(StatusCode::BAD_REQUEST, "Unexpected host.");
     }
-    if request.method() == axum::http::Method::POST
+    let machine_api = request.uri().path().starts_with("/v1/membership/");
+    if machine_api && request.headers().contains_key("origin") {
+        return failure(
+            StatusCode::FORBIDDEN,
+            "Machine API does not accept browser requests.",
+        );
+    }
+    if !machine_api
+        && request.method() == axum::http::Method::POST
         && request
             .headers()
             .get("origin")
@@ -84,7 +95,7 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
     response
 }
 async fn index(State(app): State<App>) -> Response {
-    let rows=match app.db.query("SELECT name, platform, memory_gib FROM registrations ORDER BY created_at DESC LIMIT 100",&[]).await {Ok(r)=>r,Err(_)=>return failure(StatusCode::SERVICE_UNAVAILABLE,"The directory is temporarily unavailable.")};
+    let rows=match app.db.query("SELECT r.name, r.platform, r.memory_gib, coalesce(m.role,''), coalesce(NOT m.revoked AND m.expires_at>now(),false) FROM registrations r LEFT JOIN network_members m ON m.peer_id=r.peer_id ORDER BY r.created_at DESC LIMIT 100",&[]).await {Ok(r)=>r,Err(_)=>return failure(StatusCode::SERVICE_UNAVAILABLE,"The directory is temporarily unavailable.")};
     let count = match app
         .db
         .query_one("SELECT count(*) FROM registrations", &[])
@@ -105,14 +116,21 @@ async fn index(State(app): State<App>) -> Response {
         body.push_str("<tr><td colspan=\"4\" class=\"empty\">No devices registered yet. Yours can be the first.</td></tr>");
     }
     for row in rows {
+        let member: bool = row.get(4);
+        let status = if member {
+            format!("Admitted {} · availability unknown", row.get::<_, &str>(3))
+        } else {
+            "Registered · not admitted".into()
+        };
         body.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{} GiB</td><td>Registered · unverified</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{} GiB</td><td>{}</td></tr>",
             escape(row.get::<_, &str>(0)),
             escape(row.get::<_, &str>(1)),
-            row.get::<_, i32>(2)
+            row.get::<_, i32>(2),
+            escape(&status)
         ));
     }
-    body.push_str("</tbody></table></div><h2>Start small. Measure honestly.</h2><p>Sangama currently splits one supported Qwen model between workers. Larger models, automatic placement, and open Internet participation are still being developed.</p>");
+    body.push_str("</tbody></table></div><h2>Start small. Measure honestly.</h2><p>Sangama currently splits one supported Qwen model between workers. Invited peers can use an encrypted relay and a planner for ready Qwen shards. This is an experimental trusted network; arbitrary models and anonymous public participation are not supported.</p>");
     page("Network directory", &body).into_response()
 }
 async fn join() -> Html<String> {
@@ -151,7 +169,7 @@ async fn register(State(app): State<App>, Form(form): Form<Registration>) -> Res
     }
     let result=app.db.query("WITH claimed AS (UPDATE invitations SET used_at=now() WHERE token_hash=$1 AND used_at IS NULL AND expires_at>now() RETURNING id) INSERT INTO registrations (name,peer_id,platform,memory_gib,invitation_id) SELECT $2,$3,$4,$5,id FROM claimed RETURNING id",&[&hash(&form.invitation),&form.name.trim(),&form.peer_id,&form.platform,&form.memory_gib]).await;
     match result {
-        Ok(rows) if !rows.is_empty()=>(StatusCode::CREATED,page("Device registered","<h1>Your device is registered.</h1><p>Nothing is running on your computer yet. Ask the operator for the private network invitation and worker setup instructions before connecting.</p><p><a href=\"/\">View the directory →</a></p>")).into_response(),
+        Ok(rows) if !rows.is_empty()=>(StatusCode::CREATED,page("Device registered","<h1>Your device is registered.</h1><p>Nothing is running on your computer yet. Ask the operator for a scoped network invitation, the authority public key, and your worker configuration. The mesh-join command proves ownership of your peer key before any inference connection is allowed.</p><p><a href=\"/\">View the directory →</a></p>")).into_response(),
         Ok(_)=>failure(StatusCode::FORBIDDEN,"This invitation is invalid, expired, or already used."),
         Err(e) if e.code()==Some(&tokio_postgres::error::SqlState::UNIQUE_VIOLATION)=>failure(StatusCode::CONFLICT,"This device is already registered."),
         Err(_)=>failure(StatusCode::SERVICE_UNAVAILABLE,"Registration is temporarily unavailable. Please try again."),
@@ -160,7 +178,7 @@ async fn register(State(app): State<App>, Form(form): Form<Registration>) -> Res
 async fn about() -> Html<String> {
     page(
         "How it works",
-        r#"<p class="eyebrow">HOW IT WORKS</p><h1>One model. Several computers.</h1><ol><li><strong>Register.</strong> Introduce your device using an invitation.</li><li><strong>Connect privately.</strong> The operator helps you join the approved network and configure your worker.</li><li><strong>Discover.</strong> A bootstrap node introduces peers. The distributed hash table helps them find signed model advertisements.</li><li><strong>Run a shard.</strong> Each configured worker loads its assigned part of the model. Requests pass through workers in layer order.</li></ol><h2>What this portal does</h2><p>It keeps an invitation-based device directory. It does not allocate model layers, verify device ownership, grant inference access, or show live availability.</p><h2>What stays on your computer</h2><p>Your local worker holds its model shard and runs inference. Only contribute with people you trust: encrypted connections do not make an untrusted inference peer safe for private prompts.</p><p><a href="/join">Register a device →</a></p>"#,
+        r#"<p class="eyebrow">HOW IT WORKS</p><h1>One model. Several computers.</h1><ol><li><strong>Register.</strong> Introduce your device using an invitation.</li><li><strong>Connect privately.</strong> Use a scoped invitation and the pinned authority public key. Your worker signs a one-time challenge to join. Expired or revoked memberships lose access.</li><li><strong>Discover.</strong> A bootstrap node introduces peers. The distributed hash table helps them find signed model advertisements.</li><li><strong>Run a shard.</strong> Each configured worker loads its assigned part of the model. Requests pass through workers in layer order.</li></ol><h2>What this portal does</h2><p>It keeps an invitation-based device directory. The directory alone does not grant access. The membership service verifies peer-key ownership and authorizes a worker, client, or relay role for 24 hours. It does not prove physical device ownership or show live worker availability.</p><h2>What stays on your computer</h2><p>Your local worker holds its model shard and runs inference. Only contribute with people you trust: encrypted connections do not make an untrusted inference peer safe for private prompts.</p><p><a href="/join">Register a device →</a></p>"#,
     )
 }
 async fn health(State(app): State<App>) -> Response {
@@ -171,6 +189,35 @@ async fn health(State(app): State<App>) -> Response {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
+    if env::args().nth(1).as_deref() == Some("authority-init") {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let path = std::path::PathBuf::from(
+            env::var("MEMBERSHIP_KEY_FILE").context("MEMBERSHIP_KEY_FILE required")?,
+        );
+        if !path.exists() {
+            let key = sangama_network_auth::libp2p_identity::Keypair::generate_ed25519();
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)?;
+            file.write_all(&key.to_protobuf_encoding()?)?;
+        }
+        ensure!(
+            !path.symlink_metadata()?.file_type().is_symlink(),
+            "authority key must not be a symlink"
+        );
+        let key = sangama_network_auth::libp2p_identity::Keypair::from_protobuf_encoding(
+            &std::fs::read(&path)?,
+        )?;
+        std::fs::write(path.with_extension("pub"), key.public().encode_protobuf())?;
+        // A named read-only Docker secret; its host parent must remain private.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444))?;
+        println!("Authority initialized; distribute only the .pub file.");
+        return Ok(());
+    }
+
     let password = std::fs::read_to_string(
         env::var("DATABASE_PASSWORD_FILE").context("DATABASE_PASSWORD_FILE is required")?,
     )?;
@@ -207,6 +254,51 @@ async fn main() -> Result<()> {
         println!("{token}");
         return Ok(());
     }
+    let action = env::args().nth(1).unwrap_or_default();
+    if action == "network-invite" {
+        let role = env::args().nth(2).unwrap_or_else(|| "worker".into());
+        ensure!(
+            ["worker", "client", "relay"].contains(&role.as_str()),
+            "invalid role"
+        );
+        let token = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        client
+            .execute(
+                "INSERT INTO network_invitations (token_hash,role) VALUES ($1,$2)",
+                &[&hash(&token), &role],
+            )
+            .await?;
+        println!("{token}");
+        return Ok(());
+    }
+    if action == "revoke" {
+        let peer = env::args().nth(2).context("peer ID required")?;
+        ensure!(
+            client
+                .execute(
+                    "UPDATE network_members SET revoked=true WHERE peer_id=$1",
+                    &[&peer]
+                )
+                .await?
+                == 1,
+            "member not found"
+        );
+        println!("Membership revoked");
+        return Ok(());
+    }
+    let authority = env::var("MEMBERSHIP_KEY_FILE")
+        .ok()
+        .map(|p| -> Result<_> {
+            let bytes = std::fs::read(p)?;
+            Ok(Arc::new(
+                sangama_network_auth::libp2p_identity::Keypair::from_protobuf_encoding(&bytes)?,
+            ))
+        })
+        .transpose()?;
     let origin = env::var("PUBLIC_ORIGIN").context("PUBLIC_ORIGIN is required")?;
     let host = origin
         .strip_prefix("https://")
@@ -218,7 +310,9 @@ async fn main() -> Result<()> {
         "invalid origin"
     );
     ensure!(
-        origin.starts_with("https://") || host.starts_with("127.0.0.1:"),
+        origin.starts_with("https://")
+            || host.starts_with("127.0.0.1:")
+            || env::var("SIMULATION_HTTP").as_deref() == Ok("1"),
         "HTTP is permitted only for localhost tests"
     );
     let app = App {
@@ -226,12 +320,23 @@ async fn main() -> Result<()> {
         origin,
         host,
         capacity: Arc::new(Semaphore::new(16)),
+        authority,
+        network: env::var("NETWORK_ID").unwrap_or_else(|_| "sangama-private-v1".into()),
     };
     let router = Router::new()
         .route("/", get(index))
         .route("/join", get(join).post(register))
         .route("/about", get(about))
         .route("/healthz", get(health))
+        .route(
+            "/v1/membership/challenge",
+            axum::routing::post(membership::challenge),
+        )
+        .route(
+            "/v1/membership/redeem",
+            axum::routing::post(membership::redeem),
+        )
+        .route("/v1/membership/snapshot", get(membership::snapshot))
         .route(
             "/style.css",
             get(|| async {

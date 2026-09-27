@@ -43,6 +43,41 @@ impl ModelArgs {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Reserve and load a memory-fitting assignment of prepared Qwen shards.
+    MeshAllocate {
+        #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
+        model_dir: PathBuf,
+        #[arg(long, value_delimiter = ',', required = true)]
+        candidates: Vec<SocketAddr>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Probe admitted peer bridges and select a ready route for the pinned manifest.
+    MeshPlan {
+        #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
+        model_dir: PathBuf,
+        #[arg(long, value_delimiter = ',', required = true)]
+        candidates: Vec<SocketAddr>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Print persistent mesh identity and write its public key.
+    MeshIdentity {
+        #[arg(long)]
+        state_dir: PathBuf,
+    },
+    /// Redeem an operator invitation using a signed peer-key challenge.
+    MeshJoin {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(long)]
+        invitation_file: PathBuf,
+    },
+    /// Run an admitted relay or encrypted peer-to-worker bridge.
+    Mesh {
+        #[arg(long)]
+        config: PathBuf,
+    },
     /// Serve a localhost text-chat API for OpenCode, using existing shard workers.
     ChatApi {
         #[arg(long, default_value = "127.0.0.1:8090")]
@@ -248,6 +283,28 @@ async fn main() -> Result<()> {
         cli.token = Some(sangama::security::read_token(path)?);
     }
     match cli.command {
+        Command::MeshAllocate {
+            model_dir,
+            candidates,
+            output,
+        } => print_json(
+            &sangama::mesh_allocate::allocate(&model_dir, &candidates, &token(cli.token)?).await?,
+            output,
+        )?,
+        Command::MeshPlan {
+            model_dir,
+            candidates,
+            output,
+        } => print_json(
+            &sangama::mesh_plan::probe(&model_dir, &candidates, &token(cli.token)?).await?,
+            output,
+        )?,
+        Command::MeshIdentity { state_dir } => sangama::mesh::identity(&state_dir)?,
+        Command::MeshJoin {
+            config,
+            invitation_file,
+        } => sangama::mesh::join(&config, &invitation_file).await?,
+        Command::Mesh { config } => sangama::mesh::run(&config).await?,
         Command::ChatApi {
             listen,
             model_dir,

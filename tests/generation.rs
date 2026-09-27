@@ -67,6 +67,8 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
     .unwrap();
     let (_, hash) = qwen::load_manifest(&dir.0).unwrap();
     let info = Info {
+        busy: false,
+        memory: None,
         model_id: qwen::MODEL_ID.into(),
         model_hash: hash,
         shard,
@@ -79,6 +81,10 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
     let resets = Arc::new(AtomicUsize::new(0));
     let cleared = resets.clone();
     let app = Router::new()
+        .route(
+            "/v1/qwen/reserve",
+            post(|| async { Json(serde_json::json!({"reserved":true})) }),
+        )
         .route(
             "/v1/qwen/info",
             get(move || {
@@ -122,6 +128,11 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
                     }];
                     frame.values = vec![0.; 151936];
                     frame.values[id] = 1.;
+                    if frame.header.sample {
+                        frame.header.kind = Kind::Sampled;
+                        frame.header.tokens = vec![id as u32];
+                        frame.values.clear();
+                    }
                     frame.encode().unwrap()
                 }
             }),

@@ -32,7 +32,9 @@ services:
       DATABASE_HOST: postgres
       DATABASE_PASSWORD_FILE: /run/secrets/app_password
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN}
-    secrets: [app_password]
+      MEMBERSHIP_KEY_FILE: /run/secrets/membership_key
+      NETWORK_ID: ${NETWORK_ID:-sangama-private-v1}
+    secrets: [app_password, membership_key]
     networks: [database, application]
     read_only: true
     cap_drop: [ALL]
@@ -69,3 +71,6 @@ secrets:
     file: ./secrets/postgres_password
   app_password:
     file: ./secrets/app_password
+
+  membership_key:
+    file: ./secrets/membership_key

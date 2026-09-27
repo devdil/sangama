@@ -26,7 +26,7 @@ ssh=['ssh','-i',str(secret/'id_ed25519'),'-o','BatchMode=yes','-o','IdentitiesOn
 subprocess.run(ssh+['cloud-init status --wait'],check=True)
 release=time.strftime('%Y%m%d%H%M%S',time.gmtime())
 archive=ROOT/'work'/('portal-'+release+'.tgz');archive.parent.mkdir(exist_ok=True)
-files=['.dockerignore','portal/Cargo.toml','portal/Cargo.lock','portal/schema.sql','portal/src/main.rs','portal/static/style.css','deploy/portal/Dockerfile','deploy/portal/compose.yaml','deploy/portal/Caddyfile','deploy/portal/init-db.sh','deploy/portal/prepare-secrets.py']
+files=['.dockerignore','crates/network-auth/Cargo.toml','crates/network-auth/src/lib.rs','portal/src/membership.rs','portal/Cargo.toml','portal/Cargo.lock','portal/schema.sql','portal/src/main.rs','portal/static/style.css','deploy/portal/Dockerfile','deploy/portal/compose.yaml','deploy/portal/Caddyfile','deploy/portal/init-db.sh','deploy/portal/prepare-secrets.py']
 with tarfile.open(archive,'w:gz') as tar:
     for path in files:tar.add(ROOT/path,arcname=path,recursive=False)
 remote=f'/srv/sangama/releases/{release}'
@@ -41,6 +41,7 @@ ln -s /srv/sangama/shared/secrets {remote}/deploy/portal/secrets
 printf '%s\\n' 'PUBLIC_HOST={args.domain}' 'PUBLIC_ORIGIN=https://{args.domain}' > {remote}/deploy/portal/.env
 cd {remote}/deploy/portal
 sudo docker compose --env-file .env build portal
+sudo docker run --rm --network none --user 0:0 -e MEMBERSHIP_KEY_FILE=/keys/membership_key --mount type=bind,src=/srv/sangama/shared/secrets,dst=/keys sangama-portal:local authority-init
 sudo docker compose --env-file .env up -d
 ln -sfn {remote} /srv/sangama/current
 '''

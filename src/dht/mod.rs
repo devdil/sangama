@@ -110,7 +110,7 @@ fn bootstrap(value: &Multiaddr) -> Result<(PeerId, Multiaddr)> {
     record::address(&address, false)?;
     Ok((peer, address))
 }
-fn identity(dir: &Path) -> Result<(Keypair, File)> {
+pub(crate) fn identity(dir: &Path) -> Result<(Keypair, File)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};

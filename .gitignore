@@ -16,3 +16,5 @@ __pycache__/
 /deploy/linode/*.tfstate*
 /deploy/linode/*.tfplan
 /deploy/linode/*.tfvars
+
+/crates/*/target/

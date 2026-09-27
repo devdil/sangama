@@ -45,7 +45,7 @@ def free_port():
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device',choices=['metal','cpu'],default='metal')
-    parser.add_argument('--peers',help='Existing worker endpoints in shard order (SSH tunnel endpoints for remote peers)')
+    parser.add_argument('--peers',help='Existing worker endpoints in shard order (admitted mesh bridges or SSH tunnels for remote peers)')
     parser.add_argument('--worker-token-file',type=Path)
     parser.add_argument('--serve-only',action='store_true',help='Keep gateway/workers alive for API tests')
     parser.add_argument('opencode_args',nargs=argparse.REMAINDER)

@@ -42,7 +42,8 @@ normal OpenCode settings. Credential files are private and retained under `.secr
 
 ## Existing or remote workers
 
-Start your authenticated SSH tunnels first, then use local tunnel endpoints in layer order:
+Start the [admitted mesh bridges](admitted-mesh.md) first, then use their local endpoints in layer order.
+Authenticated SSH tunnels remain an alternative:
 
 ```sh
 python3 scripts/opencode.py --device metal \

@@ -301,10 +301,12 @@ fn request(
     route: &[Endpoint],
     tokens: &[u32],
     position: usize,
+    sample: bool,
 ) -> Frame {
     Frame {
         header: Header {
             protocol: 1,
+            sample,
             model_hash: model_hash.into(),
             session: session.into(),
             position,
@@ -328,14 +330,14 @@ async fn step(http: &reqwest::Client, token: &str, frame: &Frame) -> Result<Fram
         .await?;
     let response = super::wire::response(response).await?;
     ensure!(
-        response.header.kind == Kind::Logits
+        response.valid_output()
+            && response.header.sample == frame.header.sample
             && response.header.model_hash == frame.header.model_hash
             && response.header.session == frame.header.session
             && response.header.position == frame.header.position
             && response.header.seq_len == frame.header.seq_len
             && response.header.route.is_empty()
-            && response.header.trace.len() == frame.header.route.len()
-            && response.values.len() == 151936,
+            && response.header.trace.len() == frame.header.route.len(),
         "invalid final response"
     );
     Ok(response)
@@ -457,11 +459,21 @@ async fn execute_chat(
         .collect();
     let session = uuid::Uuid::new_v4().to_string();
     let measurement: Result<_> = async {
+        // Acquire the whole route before advancing any KV cache. Cleanup below releases
+        // every successfully acquired lease if a later shard refuses the session.
+        for address in &addresses {
+            http.post(url(*address, "/v1/qwen/reserve"))
+                .bearer_auth(&options.token)
+                .json(&serde_json::json!({"session":session}))
+                .send()
+                .await?
+                .error_for_status()?;
+        }
         if verify {
             let _ = step(
                 &http,
                 &options.token,
-                &request(&model_hash, &session, &route, &prompt, 0),
+                &request(&model_hash, &session, &route, &prompt, 0, false),
             )
             .await?;
             reset(&http, &addresses, &options.token, &session).await?;
@@ -490,14 +502,18 @@ async fn execute_chat(
                     step(
                         &http,
                         &options.token,
-                        &request(&model_hash, &session, &route, chunk, position),
+                        &request(&model_hash, &session, &route, chunk, position, !verify),
                     )
                     .await?,
                 );
                 position += chunk.len();
             }
             let result = last.context("empty context")?;
-            let id = greedy(&result.values)?;
+            let id = if result.header.sample {
+                result.header.tokens[0]
+            } else {
+                greedy(&result.values)?
+            };
             times.push(now.elapsed().as_secs_f64() * 1000.0);
             last_trace = result.header.trace;
             ids.push(id);
@@ -583,7 +599,7 @@ async fn execute_chat(
                 "Generation timing includes the first prompt forward with no extra warmup; worker startup, file loading, and tokenizer initialization are excluded."
             },
             "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
-            "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for token selection and optional verification; final-worker sampling would avoid this traffic.",
+            "Worker forward_ms includes host/device tensor transfers. Generation samples greedily on the final worker and returns a token; verification returns complete logits.",
             "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
             "One active session per worker, 4096-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover.",
         ],

@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "database": "PostgreSQL 17",
+  "checks": [
+    "health and directory rendering",
+    "CSP header",
+    "cross-origin POST rejected",
+    "publication consent enforced",
+    "invalid invitation rejected",
+    "single-use invitation enforced",
+    "duplicate peer rejected without consuming invitation",
+    "HTML escapes stored user content",
+    "application DB role is not superuser",
+    "Postgres has no published ports",
+    "portal is non-root/read-only/capabilities dropped",
+    "registrations survive portal restart"
+  ],
+  "scope": "Local Docker test. Public HTTPS and Linode deployment are not verified."
+}

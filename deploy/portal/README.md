@@ -1,9 +1,11 @@
 # Sangama hosted portal
 
 This is a separate Rust server-rendered portal, not the localhost inference control panel. PostgreSQL stores
-single-use invitations and unverified device registrations. The DHT continues to store signed records in each
-node's SQLite database. The hosted directory does not advertise peers into the DHT, verify ownership,
-authorize inference, or assign model layers. No model weights or inference worker ports are deployed.
+single-use invitations, directory registrations, and cryptographic network memberships. The DHT continues
+to store signed records in each node's SQLite database. Directory registration does not authorize inference;
+the separate membership API verifies peer-key ownership and signs short-lived authorization snapshots.
+See [the admitted mesh guide](../../docs/admitted-mesh.md) for enrollment, relay setup and revocation. No model weights or inference worker ports are deployed. The current Linode firewall configuration does
+not yet expose a relay port; deploy an admitted relay deliberately before opening its TCP port.
 
 ## Current verification
 
@@ -18,6 +20,10 @@ From the repository root:
 ```sh
 python3 deploy/portal/prepare-secrets.py
 docker build -f deploy/portal/Dockerfile -t sangama-portal:local .
+docker run --rm --network none --user 0:0 \
+  -e MEMBERSHIP_KEY_FILE=/keys/membership_key \
+  --mount type=bind,src="$(pwd)/deploy/portal/secrets",dst=/keys \
+  sangama-portal:local authority-init
 export PUBLIC_ORIGIN=http://127.0.0.1:18080 PUBLIC_HOST=127.0.0.1
 docker compose -f deploy/portal/compose.yaml -f deploy/portal/compose.test.yaml -p sangama-portal-test up -d postgres portal
 python3 scripts/test-portal.py

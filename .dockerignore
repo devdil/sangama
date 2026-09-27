@@ -19,3 +19,8 @@
 !deploy/
 !deploy/portal/
 !deploy/portal/Dockerfile
+!crates/
+!crates/network-auth/
+!crates/network-auth/Cargo.toml
+!crates/network-auth/src/
+!crates/network-auth/src/**

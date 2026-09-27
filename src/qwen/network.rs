@@ -33,6 +33,10 @@ pub struct Info {
     pub device: String,
     pub precision: String,
     pub pid: u32,
+    #[serde(default)]
+    pub busy: bool,
+    #[serde(default)]
+    pub memory: Option<crate::resources::Memory>,
 }
 
 struct Session {
@@ -73,6 +77,7 @@ pub async fn serve(
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("shard index not in manifest"))?
         .clone();
+    let memory = crate::resources::check(spec.file_bytes, spec.end - spec.start, None)?;
     let file = dir.join(&spec.file);
     check_hash(&file, &spec.sha256)?;
     let cfg = config(dir)?;
@@ -90,6 +95,8 @@ pub async fn serve(
             device: backend.into(),
             precision: "f32".into(),
             pid: std::process::id(),
+            busy: false,
+            memory: Some(memory),
         },
         manifest,
         token: token.clone(),
@@ -100,6 +107,7 @@ pub async fn serve(
         .route("/v1/qwen/info", get(info))
         .route("/v1/qwen/forward", post(forward))
         .route("/v1/qwen/reset", post(reset))
+        .route("/v1/qwen/reserve", post(reserve))
         .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES))
         .layer(middleware::from_fn_with_state(token, server::authenticate))
         .with_state(state);
@@ -114,12 +122,53 @@ pub async fn serve(
 }
 
 async fn info(State(state): State<Worker>) -> Json<Info> {
-    Json(state.info)
+    let mut info = state.info;
+    info.busy = state
+        .resident
+        .try_lock()
+        .map(|r| {
+            r.session
+                .as_ref()
+                .is_some_and(|s| s.used.elapsed() < Duration::from_secs(60))
+        })
+        .unwrap_or(true);
+    Json(info)
 }
 
 #[derive(Deserialize)]
 struct Reset {
     session: String,
+}
+async fn reserve(State(state): State<Worker>, Json(request): Json<Reset>) -> Response {
+    if uuid::Uuid::parse_str(&request.session).is_err() {
+        return error(StatusCode::BAD_REQUEST, "invalid session");
+    }
+    match state.resident.try_lock() {
+        Ok(mut resident) => {
+            if resident
+                .session
+                .as_ref()
+                .is_some_and(|s| s.used.elapsed() > Duration::from_secs(60))
+            {
+                resident.model.clear();
+                resident.session = None;
+            }
+            if let Some(session) = &mut resident.session {
+                if session.id != request.session {
+                    return error(StatusCode::CONFLICT, "worker reserved by another session");
+                }
+                session.used = Instant::now();
+            } else {
+                resident.session = Some(Session {
+                    id: request.session,
+                    position: 0,
+                    used: Instant::now(),
+                });
+            }
+            Json(serde_json::json!({"reserved":true,"lease_seconds":60})).into_response()
+        }
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "worker busy"),
+    }
 }
 async fn reset(State(state): State<Worker>, Json(request): Json<Reset>) -> Response {
     match state.resident.try_lock() {
@@ -227,17 +276,18 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
             ensure!(h.position == 0, "new session must begin at position zero");
         }
         let started = Instant::now();
-        let values = match resident
-            .model
-            .forward(&h.tokens, &frame.values, h.seq_len, h.position)
-        {
-            Ok(values) => values,
-            Err(error) => {
-                resident.model.clear();
-                resident.session = None;
-                return Err(error.into());
-            }
-        };
+        let mut values =
+            match resident
+                .model
+                .forward(&h.tokens, &frame.values, h.seq_len, h.position)
+            {
+                Ok(values) => values,
+                Err(error) => {
+                    resident.model.clear();
+                    resident.session = None;
+                    return Err(error.into());
+                }
+            };
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         resident.session = Some(Session {
             id: h.session.clone(),
@@ -258,6 +308,21 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
         } else {
             Kind::Hidden
         };
+        if header.route.is_empty() && header.sample {
+            ensure!(
+                values.len() == 151936 && values.iter().all(|v| v.is_finite()),
+                "invalid final logits"
+            );
+            let mut best = 0;
+            for i in 1..values.len() {
+                if values[i] > values[best] {
+                    best = i;
+                }
+            }
+            header.tokens = vec![best as u32];
+            header.kind = Kind::Sampled;
+            values.clear();
+        }
         Ok(Frame { header, values })
     })
     .await;
@@ -274,12 +339,12 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
                 .await?;
             let output = super::wire::response(response).await?;
             ensure!(
-                output.header.kind == Kind::Logits
+                output.valid_output()
+                    && output.header.sample == frame.header.sample
                     && output.header.model_hash == frame.header.model_hash
                     && output.header.session == frame.header.session
                     && output.header.position == frame.header.position
                     && output.header.seq_len == frame.header.seq_len
-                    && output.values.len() == 151936
                     && output.header.trace.len() == state.manifest.shards.len(),
                 "invalid downstream response"
             );

@@ -18,8 +18,9 @@ local shard advertisements, signed provider discovery, standalone Qwen generatio
 Discovery uses **libp2p Kademlia over Noise/TCP**, with **SQLite-backed records** and persistent identities.
 See [DHT architecture and setup](docs/dht.md), [secure peer testing](docs/secure-peer-test.md),
 and [Docker isolation tests](docs/docker-testing.md) for real Qwen generation and DHT discovery in separate containers.
-Discovered devices are not automatically authorized for inference; application invitations and automatic
-shard assignment remain future work. The initial network uses private Tailscale connectivity.
+Discovered devices are not automatically authorized. The legacy discovery UI uses a private overlay;
+the new [admitted Internet mesh](docs/admitted-mesh.md) adds signed membership, a controlled relay,
+peer inference transport, memory-aware loading of prepared shards, ready-route planning, and session reservations.
 
 ## Generate text without a full local model
 
@@ -71,7 +72,8 @@ The current test supports one active conversation per worker, greedy decoding, a
 
 ### Two physical devices, including Internet peers
 
-Follow [the secure peer test guide](docs/secure-peer-test.md). Qwen workers now **refuse non-loopback binds**
+Use the [admitted mesh guide](docs/admitted-mesh.md) to connect invited peers without SSH tunnels.
+The older [secure peer test guide](docs/secure-peer-test.md) remains an alternative. Qwen workers **refuse non-loopback binds**
 and require an explicit `--allow-next` destination to forward activations. Use pinned-key SSH tunnels over
 Tailscale, private token files, and dedicated access restricted to the participating devices.
 The guide includes enrollment, exact commands, revocation, and the remaining prototype limitations.
@@ -175,7 +177,7 @@ Substitute actual private addresses and set the shared token. Peers need bidirec
 The transport is HTTP/JSON with a shared bearer token, **not encrypted transport or public P2P networking**.
 Use only trusted private LANs or a private encrypted overlay; do not expose these ports publicly.
 Numeric loopback, RFC1918 IPv4, and IPv6 unique-local addresses are accepted. Public and link-local addresses are rejected.
-There is no mDNS, NAT traversal, relay service, or independent peer identity yet.
+This legacy numerical fixture does not use the admitted mesh transport or its identity/membership controls.
 
 ## Fixture capabilities
 
@@ -217,9 +219,10 @@ docs/architecture.md  Current architecture and remaining milestones
 
 ## Next milestone
 
-Measure two physical devices, add quantized weights and sample tokens at the final worker (the checker currently returns full logits).
-Then integrate measured placement, resource admission, and recovery. Speculative decoding, mobile apps,
-Kimi/MoE support, encrypted peer identity, and public volunteer participation remain future work.
+Measure the admitted mesh between two physical home networks. Normal generation now samples at the
+final worker; the checker retains full logits. Managed shard placement, memory admission and reservation are implemented;
+automatic repartitioning, quantized weights, mid-session KV migration, speculative decoding, mobile apps,
+Kimi/MoE support, and anonymous public participation remain future work.
 See [the architecture plan](docs/architecture.md). Real-checkpoint tests are explicit commands, not part of CI;
 the automated Qwen test uses small random weights and verifies prefill, decode, and cache reset against upstream Candle.
 For Metal checks, add `--features metal` to the clippy and test commands above.

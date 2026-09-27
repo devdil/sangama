@@ -18,7 +18,7 @@ fn start(args: &[&str]) -> Process {
             .args(args)
             .env("P2P_TOKEN", "process-test-token-only")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap(),
     )
@@ -36,10 +36,14 @@ async fn standalone_coordinator_workers_and_bench_interoperate() {
     let mut reservations = reservations.into_iter();
     drop(reservations.next());
     let coordinator = addresses[0].to_string();
-    let _coordinator = start(&["coordinator", "--listen", &coordinator]);
+    let mut coordinator_process = start(&["coordinator", "--listen", &coordinator]);
     let http = server::client().unwrap();
     let mut ready = false;
-    for _ in 0..100 {
+    for _ in 0..333 {
+        assert!(
+            coordinator_process.0.try_wait().unwrap().is_none(),
+            "coordinator exited during startup"
+        );
         if http
             .get(url(addresses[0], "/health"))
             .bearer_auth("process-test-token-only")
