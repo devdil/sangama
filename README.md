@@ -141,3 +141,17 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [OpenCode](docs/opencode.md) | Local coding-assistant integration |
 
 The next milestone is a repeatable two-home-network test, followed by easier onboarding and measured improvements to performance and reliability.
+
+### Installed coding-assistant command
+
+After preparing the model, building Sangama, and running `./scripts/install-opencode.sh`:
+
+```sh
+python3 scripts/install-sangama-code.py
+cd /path/to/your/project
+sangama-code
+```
+
+This installs a user-level command on macOS/Linux. It starts local workers automatically and opens
+OpenCode in the current directory. The current model supports text suggestions; file editing and tools
+are disabled. See [installation and remote-worker options](docs/opencode.md).

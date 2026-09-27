@@ -14,7 +14,11 @@ From the Sangama repository:
 ```sh
 ./scripts/cargo build --release --features metal --locked
 ./scripts/install-opencode.sh
-python3 scripts/opencode.py
+python3 scripts/install-sangama-code.py
+
+# Now open any project, in any terminal:
+cd /path/to/your/project
+sangama-code
 ```
 
 The installer installs the pinned OpenCode 1.18.32 client. It pins npm dependencies with
@@ -22,8 +26,19 @@ a lockfile, skips dependency lifecycle scripts, and then runs the reviewed upstr
 It installs under `.tools/opencode`, without changing global packages or shell configuration.
 The Rust build needs the prepared Qwen checkpoint to run; use `python3 scripts/fetch-qwen.py` if it is missing.
 
-The launcher starts two independent Metal worker processes and the gateway, opens OpenCode in a disposable
-`work/opencode-workspace` repository, and stops its own child processes when OpenCode exits. Choose the
+The user installer copies the native Sangama binary, native OpenCode binary, launcher, and configuration
+into `~/.local/share/sangama-code`, and creates `~/.local/bin/sangama-code`. Python 3 is required at runtime;
+Rust and Node/npm are only needed to prepare the source installation. If the bin directory is missing from
+PATH, the installer prints the shell-profile line to add. The shell profile is not modified automatically.
+This installer currently supports macOS/Linux; a Windows installed coding CLI is still pending.
+
+Model files remain in the selected model directory; they are not copied or downloaded by this installer.
+Use `--model-dir /persistent/model/path` during installation to keep them independent of the checkout.
+Run the installer again to update the copied runtime. Remove the command and runtime directory to uninstall;
+model files are retained. Existing runtime data includes local conversation history.
+
+The launcher starts two independent worker processes and the gateway, opens OpenCode in your current
+project directory, and stops its own child processes when OpenCode exits. Choose the
 **sangama** agent and **Sangama peers / Qwen 0.5B** model. Paste a short code example into the prompt.
 Only Sangama is enabled as an inference provider; there is no cloud-model fallback. Sharing and auto-updates
 are disabled. First-time OpenCode startup may still download client/provider metadata or packages; this is
@@ -32,13 +47,16 @@ not an offline-network guarantee.
 For a noninteractive example:
 
 ```sh
-python3 scripts/opencode.py -- run 'Explain what this does: def double(x): return x * 2'
+sangama-code -- run 'Explain what this does: def double(x): return x * 2'
 ```
 
 Use `--device cpu` for a CPU-only build. The launcher keeps OpenCode's XDG config/data/cache/state in
 `.mesh/opencode` and passes an API token through its child environment, never a command-line argument.
 This local state includes conversation history; it is ignored by Git. The launcher doesn't overwrite your
-normal OpenCode settings. Credential files are private and retained under `.secrets/opencode` for reuse.
+normal OpenCode settings. Worker credentials are private and retained under `.secrets/opencode` for reuse. Each session uses a separate
+API token, removed on normal shutdown. Installed state paths are relative to the installed runtime directory.
+Project OpenCode configuration and Claude compatibility are disabled, and OpenCode gets an isolated home;
+your existing OpenCode settings and project plugins are not loaded.
 
 ## Existing or remote workers
 
@@ -57,7 +75,7 @@ select or authorize this inference route.
 
 ## Protocol and boundaries
 
-- `GET /v1/models` and `POST /v1/chat/completions`, bound only to `127.0.0.1:8090` by the launcher.
+- `GET /v1/models` and `POST /v1/chat/completions`, bound only to `127.0.0.1` on a per-session ephemeral port, printed at startup. `--serve-only` retains port 8090 and the reusable API token for API tests.
 - Distinct API and worker bearer tokens. OpenCode receives only the API token.
 - Exact Host validation, browser Origin rejection, 256 KiB request-body limit, constant-time credential comparison.
 - One active request per gateway; concurrent requests receive HTTP 429. Do not run multiple gateways against

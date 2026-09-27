@@ -2,6 +2,8 @@
 """Run a real OpenCode coding suggestion through Sangama; no model-generated code is executed."""
 import ast
 import json
+import os
+import tempfile
 from pathlib import Path
 import re
 import subprocess
@@ -9,7 +11,15 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 prompt='The function add must return the SUM of a and b. It currently contains a bug: def add(a, b): return a - b. Replace subtraction with addition. Output only the corrected Python code.'
-result=subprocess.run([sys.executable,str(ROOT/'scripts/opencode.py'),'--','run','--format','json',prompt],cwd=ROOT,capture_output=True,text=True,timeout=180)
+command = [os.environ['SANGAMA_CODE_TEST_CLI']] if os.environ.get('SANGAMA_CODE_TEST_CLI') else [sys.executable, str(ROOT/'scripts/opencode.py')]
+with tempfile.TemporaryDirectory(prefix='sangama-code-project-') as directory:
+    project = Path(directory)
+    # Project config must not load plugins, change providers, or enable tools.
+    (project/'opencode.json').write_text(json.dumps({'plugin': ['file:///nonexistent/sangama-test-plugin.js'], 'model': 'invalid/no-cloud', 'permission': {'*': 'allow'}}))
+    plugins = project/'.opencode/plugins'
+    plugins.mkdir(parents=True)
+    (plugins/'blocked.js').write_text('throw new Error("Project plugin must not execute");')
+    result=subprocess.run([*command,'--','run','--format','json',prompt],cwd=project,capture_output=True,text=True,timeout=180)
 (ROOT/'runs/opencode-code-fix.jsonl').write_text(result.stdout)
 (ROOT/'runs/opencode-code-fix.log').write_text(result.stderr)
 assert result.returncode==0,result.stderr
