@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "checks": {
+    "browser_join": true,
+    "browser_advertise": true,
+    "browser_find": true,
+    "browser_real_qwen": true
+  },
+  "topology": "all nodes and workers on one physical Mac",
+  "storage": "SQLite",
+  "inference_logit_error": 0.0
+}

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Prefer the isolated toolchain installed for this project, otherwise system cargo.
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -x "$project_dir/.tools/cargo/bin/cargo" ]; then
+    export CARGO_HOME="$project_dir/.tools/cargo"
+    export RUSTUP_HOME="$project_dir/.tools/rustup"
+    export PATH="$CARGO_HOME/bin:$PATH"
+fi
+exec cargo "$@"

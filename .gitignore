@@ -1,0 +1,11 @@
+/target/
+/.tools/
+/.env
+/runs/
+/.models/
+/work/
+.DS_Store
+/.secrets/
+__pycache__/
+*.pyc
+/.mesh/

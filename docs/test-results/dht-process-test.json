@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "topology": "three independent processes on one Mac; seeker bootstraps only through seed",
+  "seed_peer": "12D3KooWBuEvvTuXHG1YkcSaMUvenrm8nWShcgGrmCAForiNa84B",
+  "provider_peer": "12D3KooWQXrLsL2WirCzABdxc4Lm4KJzec211z5HEfZadAxU58ac",
+  "seeker_peer": "12D3KooWDmXNpt8cS42VeujSk4tnKEzXwGbQmaz11H5RzBWZfK2v",
+  "process_ids": [
+    84741,
+    84742,
+    84743
+  ],
+  "discovered": [
+    {
+      "version": 1,
+      "peer_id": "12D3KooWQXrLsL2WirCzABdxc4Lm4KJzec211z5HEfZadAxU58ac",
+      "model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "start": 12,
+      "end": 24,
+      "addresses": [
+        "/ip4/127.0.0.1/tcp/49671"
+      ],
+      "issued": 1790483644,
+      "expires": 1790483944
+    }
+  ],
+  "storage": "SQLite",
+  "transport": "libp2p Kademlia over Noise/TCP/Yamux"
+}

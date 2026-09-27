@@ -1,0 +1,9 @@
+{
+  "wrong_token_rejected_over_ssh": true,
+  "malformed_frame_rejected": true,
+  "unapproved_forward_rejected": true,
+  "oversized_frame_rejected": true,
+  "real_model_over_ssh_passed": true,
+  "exact_logits": true,
+  "wrong_host_key_rejected": true
+}

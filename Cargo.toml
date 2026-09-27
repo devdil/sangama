@@ -1,0 +1,36 @@
+[package]
+name = "p2p-inference"
+version = "0.1.0"
+edition = "2024"
+description = "A measurable Rust foundation for distributed model execution"
+publish = false
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+candle = { package = "candle-core", version = "=0.11.0" }
+candle-nn = "=0.11.0"
+candle-transformers = "=0.11.0"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+sha2 = "0.10"
+subtle = "2.6"
+libc = "0.2"
+libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp", "noise", "yamux", "kad", "macros", "identify"] }
+futures = "0.3"
+fs2 = "0.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[features]
+default = []
+metal = ["candle/metal", "candle-nn/metal", "candle-transformers/metal"]
+
+[profile.release]
+lto = "thin"
