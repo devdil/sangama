@@ -1,0 +1,297 @@
+{
+  "passed": true,
+  "architecture": "linux/arm64 CPU containers on one Docker Desktop VM",
+  "client_network_namespace": "net:[4026532822]",
+  "checks": {
+    "metadata_only_client": true,
+    "separate_shard_workers": true,
+    "ssh_encrypted_connections": true,
+    "invalid_token_rejected": true,
+    "second_session_after_reset": true,
+    "tokens_match_recorded_independent_baseline": true
+  },
+  "workers": [
+    {
+      "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+      "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+      "shard": {
+        "index": 0,
+        "start": 0,
+        "end": 12,
+        "file": "shard-0-of-2.safetensors",
+        "sha256": "f4b9b8ca4a579afe37315e72462960d81ce99be33c478e12b0b1fdab80d4f0a7",
+        "file_bytes": 630182608,
+        "tensor_count": 145
+      },
+      "device": "cpu",
+      "precision": "f32",
+      "pid": 12
+    },
+    {
+      "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+      "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+      "shard": {
+        "index": 1,
+        "start": 12,
+        "end": 24,
+        "file": "shard-1-of-2.safetensors",
+        "sha256": "432b85fcd5ce8651388dfaf16618afad0d5c7d683c0080790d80d41223989a97",
+        "file_bytes": 630184608,
+        "tensor_count": 146
+      },
+      "device": "cpu",
+      "precision": "f32",
+      "pid": 8
+    }
+  ],
+  "generation": {
+    "operation": "generate",
+    "finish_reason": "eos",
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "manifest_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+    "precision": "BF16 checkpoint converted to F32; not quantized",
+    "device": "cpu",
+    "topology": "explicit supplied peer addresses; physical topology not independently verified",
+    "prompt": "Explain peer-to-peer computing in one short sentence.",
+    "prompt_tokens": 30,
+    "generated_tokens": 20,
+    "local_text": null,
+    "distributed_text": "Peer-to-peer computing allows users to connect and share resources without the need for a central server.",
+    "local_token_ids": null,
+    "distributed_token_ids": [
+      30888,
+      4686,
+      78597,
+      24231,
+      6147,
+      3847,
+      311,
+      4564,
+      323,
+      4332,
+      4963,
+      2041,
+      279,
+      1184,
+      369,
+      264,
+      8622,
+      3538,
+      13,
+      151645
+    ],
+    "tokens_match": null,
+    "maximum_logit_absolute_error": null,
+    "logit_tolerance": null,
+    "passed": null,
+    "local": null,
+    "distributed": {
+      "first_token_ms": 2155.330626,
+      "decode_tokens_per_second": 3.0638540039909854,
+      "total_ms": 8356.670499000002
+    },
+    "workers": [
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 0,
+          "start": 0,
+          "end": 12,
+          "file": "shard-0-of-2.safetensors",
+          "sha256": "f4b9b8ca4a579afe37315e72462960d81ce99be33c478e12b0b1fdab80d4f0a7",
+          "file_bytes": 630182608,
+          "tensor_count": 145
+        },
+        "device": "cpu",
+        "precision": "f32",
+        "pid": 12
+      },
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 1,
+          "start": 12,
+          "end": 24,
+          "file": "shard-1-of-2.safetensors",
+          "sha256": "432b85fcd5ce8651388dfaf16618afad0d5c7d683c0080790d80d41223989a97",
+          "file_bytes": 630184608,
+          "tensor_count": 146
+        },
+        "device": "cpu",
+        "precision": "f32",
+        "pid": 8
+      }
+    ],
+    "last_trace": [
+      {
+        "shard": 0,
+        "start": 0,
+        "end": 12,
+        "forward_ms": 73.065916
+      },
+      {
+        "shard": 1,
+        "start": 12,
+        "end": 24,
+        "forward_ms": 139.527375
+      }
+    ],
+    "notes": [
+      "Standalone greedy generation: no complete checkpoint is read or loaded on the client. No baseline comparison is performed; verification fields are null.",
+      "Generation timing includes the first prompt forward with no extra warmup; worker startup, file loading, and tokenizer initialization are excluded.",
+      "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
+      "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for token selection and optional verification; final-worker sampling would avoid this traffic.",
+      "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
+      "One active session per worker, 1024-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover."
+    ]
+  },
+  "arithmetic": {
+    "operation": "generate",
+    "finish_reason": "eos",
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "manifest_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+    "precision": "BF16 checkpoint converted to F32; not quantized",
+    "device": "cpu",
+    "topology": "explicit supplied peer addresses; physical topology not independently verified",
+    "prompt": "What is 2 + 2? Answer with only the number.",
+    "prompt_tokens": 33,
+    "generated_tokens": 2,
+    "local_text": null,
+    "distributed_text": "4",
+    "local_token_ids": null,
+    "distributed_token_ids": [
+      19,
+      151645
+    ],
+    "tokens_match": null,
+    "maximum_logit_absolute_error": null,
+    "logit_tolerance": null,
+    "passed": null,
+    "local": null,
+    "distributed": {
+      "first_token_ms": 1708.739251,
+      "decode_tokens_per_second": 1.5008753840668816,
+      "total_ms": 2375.017085
+    },
+    "workers": [
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 0,
+          "start": 0,
+          "end": 12,
+          "file": "shard-0-of-2.safetensors",
+          "sha256": "f4b9b8ca4a579afe37315e72462960d81ce99be33c478e12b0b1fdab80d4f0a7",
+          "file_bytes": 630182608,
+          "tensor_count": 145
+        },
+        "device": "cpu",
+        "precision": "f32",
+        "pid": 12
+      },
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 1,
+          "start": 12,
+          "end": 24,
+          "file": "shard-1-of-2.safetensors",
+          "sha256": "432b85fcd5ce8651388dfaf16618afad0d5c7d683c0080790d80d41223989a97",
+          "file_bytes": 630184608,
+          "tensor_count": 146
+        },
+        "device": "cpu",
+        "precision": "f32",
+        "pid": 8
+      }
+    ],
+    "last_trace": [
+      {
+        "shard": 0,
+        "start": 0,
+        "end": 12,
+        "forward_ms": 485.6905
+      },
+      {
+        "shard": 1,
+        "start": 12,
+        "end": 24,
+        "forward_ms": 168.979042
+      }
+    ],
+    "notes": [
+      "Standalone greedy generation: no complete checkpoint is read or loaded on the client. No baseline comparison is performed; verification fields are null.",
+      "Generation timing includes the first prompt forward with no extra warmup; worker startup, file loading, and tokenizer initialization are excluded.",
+      "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
+      "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for token selection and optional verification; final-worker sampling would avoid this traffic.",
+      "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
+      "One active session per worker, 1024-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover."
+    ]
+  },
+  "container_isolation": [
+    {
+      "role": "worker1",
+      "container_id": "462aba319305a5398f1becb20caeca6ace4afa21c1c73e6d1309838c2073dc7f",
+      "network_namespace": "net:[4026532552]",
+      "model_files": [
+        "config.json",
+        "manifest.json",
+        "shard-1-of-2.safetensors"
+      ],
+      "uid": "10001:10001",
+      "read_only_root": true,
+      "host_ports_published": false,
+      "capabilities_dropped": [
+        "ALL"
+      ],
+      "no_new_privileges": true,
+      "memory_limit": 3221225472,
+      "oom_killed": false
+    },
+    {
+      "role": "worker0",
+      "container_id": "b621de3e705de322374096ff6e634911a8bb9258a4f88fc7a5ba04d1ddb2d0b6",
+      "network_namespace": "net:[4026532687]",
+      "model_files": [
+        "config.json",
+        "manifest.json",
+        "shard-0-of-2.safetensors"
+      ],
+      "uid": "10001:10001",
+      "read_only_root": true,
+      "host_ports_published": false,
+      "capabilities_dropped": [
+        "ALL"
+      ],
+      "no_new_privileges": true,
+      "memory_limit": 3221225472,
+      "oom_killed": false
+    },
+    {
+      "role": "client",
+      "container_id": "0722dbb779f28d433363d7cf804f7066bff90020e02d797597e64cd918b4ab81",
+      "network_namespace": "net:[4026532822]",
+      "model_files": [
+        "config.json",
+        "manifest.json",
+        "tokenizer.json"
+      ],
+      "uid": "10001:10001",
+      "read_only_root": true,
+      "host_ports_published": false,
+      "capabilities_dropped": [
+        "ALL"
+      ],
+      "no_new_privileges": true,
+      "memory_limit": 805306368,
+      "oom_killed": false
+    }
+  ],
+  "image_id": "sha256:9457ed90fba4b5882c582a56809a1289a5ae7b8b72190ba358998aa03f442efb"
+}

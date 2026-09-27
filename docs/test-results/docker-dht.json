@@ -1,0 +1,49 @@
+{
+  "passed": true,
+  "topology": "three containers on one Docker Desktop VM; seeker knows only the seed",
+  "seed": "12D3KooWN84QEXUoDWWt9PimABhP9FBXGt9K4ZiaoLFcPtDkxKAf",
+  "provider": "12D3KooWFhRW4WBeniHxm9VjnSPc9SGtrwZ5qpDhEMDnJ8tjCB8K",
+  "seeker": "12D3KooWLh2SQkvarMpKXPS9D1gLUhfCV2Uj1KvXFuJfKjNmYdbC",
+  "discoveries": [
+    {
+      "version": 1,
+      "peer_id": "12D3KooWFhRW4WBeniHxm9VjnSPc9SGtrwZ5qpDhEMDnJ8tjCB8K",
+      "model_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "start": 12,
+      "end": 24,
+      "addresses": [
+        "/ip4/172.20.0.3/tcp/9000"
+      ],
+      "issued": 1790485727,
+      "expires": 1790486027
+    }
+  ],
+  "container_isolation": [
+    {
+      "role": "seed",
+      "container_id": "4a826bb06c113da53bbb44b2862496ce130234d6a9bb2ca4db84eb7df08a0ecf",
+      "network_namespace": "net:[4026532552]",
+      "ip": "172.20.0.2",
+      "uid": "10001:10001",
+      "read_only_root": true
+    },
+    {
+      "role": "provider",
+      "container_id": "1824ecec39acdb23d78bb0c2964a45b66a59ac9029ce72c26e1babe57a4df57f",
+      "network_namespace": "net:[4026532687]",
+      "ip": "172.20.0.3",
+      "uid": "10001:10001",
+      "read_only_root": true
+    },
+    {
+      "role": "seeker",
+      "container_id": "9f147fdd4469df6a663009cde6c79d72427d75a2ca72f782fa363d98a1c3324a",
+      "network_namespace": "net:[4026532822]",
+      "ip": "172.20.0.4",
+      "uid": "10001:10001",
+      "read_only_root": true
+    }
+  ],
+  "image_id": "sha256:9457ed90fba4b5882c582a56809a1289a5ae7b8b72190ba358998aa03f442efb",
+  "note": "The all-a model hash is synthetic discovery metadata. No inference weights are loaded in this test."
+}

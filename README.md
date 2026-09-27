@@ -16,7 +16,8 @@ The original deterministic numerical fixture remains available for networking te
 Open the private localhost URL printed in the terminal. The UI supports bootstrap joining,
 local shard advertisements, signed provider discovery, standalone Qwen generation, optional verification, and JSON report downloads.
 Discovery uses **libp2p Kademlia over Noise/TCP**, with **SQLite-backed records** and persistent identities.
-See [DHT architecture and setup](docs/dht.md) and [secure peer testing](docs/secure-peer-test.md).
+See [DHT architecture and setup](docs/dht.md), [secure peer testing](docs/secure-peer-test.md),
+and [Docker isolation tests](docs/docker-testing.md) for real Qwen generation and DHT discovery in separate containers.
 Discovered devices are not automatically authorized for inference; application invitations and automatic
 shard assignment remain future work. The initial network uses private Tailscale connectivity.
 
