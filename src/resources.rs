@@ -63,7 +63,43 @@ pub fn available() -> Option<u64> {
         // Unified memory is counted once. Compressed memory is not treated as free.
         Some(pages.saturating_mul(page))
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        #[repr(C)]
+        struct MemoryStatus {
+            length: u32,
+            load: u32,
+            total_phys: u64,
+            avail_phys: u64,
+            total_page: u64,
+            avail_page: u64,
+            total_virtual: u64,
+            avail_virtual: u64,
+            avail_extended: u64,
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GlobalMemoryStatusEx(status: *mut MemoryStatus) -> i32;
+        }
+        let mut status = MemoryStatus {
+            length: std::mem::size_of::<MemoryStatus>() as u32,
+            load: 0,
+            total_phys: 0,
+            avail_phys: 0,
+            total_page: 0,
+            avail_page: 0,
+            total_virtual: 0,
+            avail_virtual: 0,
+            avail_extended: 0,
+        };
+        // SAFETY: valid writable MEMORYSTATUSEX layout with its required length initialized.
+        if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 {
+            Some(status.avail_phys)
+        } else {
+            None
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         None
     }
@@ -92,4 +128,15 @@ pub fn check(file_bytes: u64, layers: usize, budget_mib: Option<u64>) -> anyhow:
         estimated_required_bytes: required,
         budget_bytes: budget,
     })
+}
+
+#[cfg(all(
+    test,
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+mod tests {
+    #[test]
+    fn measures_native_available_memory() {
+        assert!(super::available().is_some_and(|bytes| bytes > 0));
+    }
 }

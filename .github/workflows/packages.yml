@@ -1,0 +1,102 @@
+name: Worker packages
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version (v-prefixed)
+        required: true
+        default: v0.1.0-preview.1
+      draft_release:
+        description: Collect successful builds into a draft prerelease
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            features: --features metal
+            binary: sangama
+            dmg: --dmg
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            features: ''
+            binary: sangama
+            dmg: ''
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            features: ''
+            binary: sangama
+            dmg: ''
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            features: ''
+            binary: sangama.exe
+            dmg: ''
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ inputs.version }}
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Native core tests
+        run: cargo test --locked --lib
+      - name: Build worker
+        run: cargo build --release --locked ${{ matrix.features }}
+      - name: Check executable and host memory
+        shell: bash
+        run: |
+          ./target/release/${{ matrix.binary }} --version
+          ./target/release/${{ matrix.binary }} doctor
+      - name: Package
+        shell: bash
+        run: python packaging/build.py --version "$VERSION" --target '${{ matrix.target }}' --binary 'target/release/${{ matrix.binary }}' ${{ matrix.dmg }}
+      - name: Installer regression tests
+        run: python -m unittest discover -s tests -p test_packaging.py
+      - name: Windows installer smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./packaging/install.ps1 -Version $env:VERSION -ReleaseDir "$pwd/dist" -InstallDir "$env:RUNNER_TEMP/sangama/bin"
+          & "$env:RUNNER_TEMP/sangama/bin/sangama.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'Installed executable failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sangama-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+  draft:
+    if: inputs.draft_release
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Aggregate checksums
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          folder=Path('dist')
+          (folder/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(folder.iterdir()) if p.is_file() and p.name!='SHA256SUMS'))
+          PY
+      - name: Create draft for review
+        run: |
+          gh release create "$VERSION" dist/* --draft --prerelease --target "$GITHUB_SHA" --title "Sangama $VERSION" --notes "Development preview. macOS DMG is ad-hoc signed, not notarized; Windows executable is unsigned. Review docs/distribution.md and finish platform signing/install acceptance before publication. Packages do not yet automate enrollment or model downloads."

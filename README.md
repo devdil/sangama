@@ -7,6 +7,11 @@ A Rust foundation for running model pieces across participating computers.
 **Status: real Qwen text generation works across separate Rust worker processes, using Candle on Metal or CPU.**
 The original deterministic numerical fixture remains available for networking tests.
 
+## Worker packages
+
+See [downloads, DMG, shell/PowerShell installers and native builds](docs/distribution.md).
+Packaging is a development preview; public download hosting, platform signing and seamless enrollment remain release gates.
+
 ## Start contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, a first real-model run, a source map and validation commands.
