@@ -172,12 +172,18 @@ struct Run {
     prompt: String,
     max_tokens: usize,
     mode: String,
+    #[serde(default = "default_operation")]
+    operation: String,
+}
+fn default_operation() -> String {
+    "generate".into()
 }
 async fn run(State(app): State<App>, Json(input): Json<Run>) -> Response {
     if input.prompt.trim().is_empty()
         || input.prompt.len() > 16 * 1024
         || !(1..=128).contains(&input.max_tokens)
         || !["local", "peers"].contains(&input.mode.as_str())
+        || !["generate", "verify"].contains(&input.operation.as_str())
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -200,7 +206,7 @@ async fn run(State(app): State<App>, Json(input): Json<Run>) -> Response {
         )
             .into_response();
     }
-    *job = json!({"phase":"running","mode":input.mode,"prompt":input.prompt});
+    *job = json!({"phase":"running","mode":input.mode,"prompt":input.prompt,"operation":input.operation});
     drop(job);
     tokio::spawn(async move {
         let options = Options {
@@ -218,7 +224,14 @@ async fn run(State(app): State<App>, Json(input): Json<Run>) -> Response {
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         };
         // Keep a failed inference task from leaving the UI permanently busy.
-        let outcome = tokio::spawn(runner::run(options)).await;
+        let outcome = tokio::spawn(async move {
+            if input.operation == "verify" {
+                runner::run(options).await
+            } else {
+                runner::generate(options).await
+            }
+        })
+        .await;
         let value = match outcome {
             Ok(Ok(report)) => json!({"phase":"complete","report":report}),
             Ok(Err(error)) => json!({"phase":"error","error":error.to_string()}),

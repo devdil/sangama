@@ -175,3 +175,10 @@ before compute and transfer costs. This is an illustrative bound, not a measurem
 - [OpenSSH server options](https://man.openbsd.org/sshd_config): account limits and forwarding direction.
 - [Tailscale sharing](https://tailscale.com/kb/1084/sharing): private device enrollment and access control.
 - [Tailscale connection types](https://tailscale.com/docs/reference/connection-types): direct and relayed connections.
+
+## Generate after validation
+
+Once both workers and the tunnel are running, use `sangama generate` with the same `--peers`,
+`--device`, and `--token-file` arguments to skip the full local baseline. Its `--model-dir` needs
+only `manifest.json`, `config.json`, and `tokenizer.json`; the weights stay on workers.
+The UI exposes this as **Generate text · workers only**. See [standalone generation](generation.md).

@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 let key = /^[a-f0-9]{64}$/.test(location.hash.slice(1)) ? location.hash.slice(1) : '';
 if (key) { sessionStorage.setItem('sangama-ui-key', key); history.replaceState(null, '', '/'); }
 key ||= sessionStorage.getItem('sangama-ui-key') || '';
+const operation = () => $('operation').value;
 let mode = 'local', config = null, report = null, busy = false, pending = false;
 const notice = message => { $('notice').textContent = message; $('notice').hidden = !message; };
 async function api(path, options = {}) {
@@ -22,13 +23,16 @@ function setMode(value) {
   $('peer-a').textContent = mode === 'local' ? 'Auto-assigned localhost' : config?.peers[0] || 'Not configured';
   $('peer-b').textContent = mode === 'local' ? 'Auto-assigned localhost' : config?.peers[1] || 'Not configured';
   $('mode-hint').textContent = mode === 'local'
-    ? 'A split-model correctness test on one machine. This does not measure multi-device scaling.'
+    ? 'Both shard workers run on this computer. The client does not load a full model during generation.'
     : 'Start with --peers and --token-file to connect approved SSH tunnel endpoints. Physical locations are not verified by this app.';
   updateButton();
 }
 function updateButton() {
   $('run').disabled = !config?.model_ready || busy || pending || (mode === 'peers' && !config?.peer_enabled);
-  $('run').textContent = busy || pending ? 'Verification running…' : 'Run verification ↗';
+  $('run').textContent = busy || pending ? 'Working…' : operation() === 'verify' ? 'Run verification ↗' : 'Generate text ↗';
+  $('operation').disabled = busy || pending;
+  $('decode-note').textContent = operation() === 'verify' ? 'Same prompt, both routes' : 'No local baseline required';
+  $('task-note').textContent = operation() === 'verify' ? 'Loads the full baseline first, then checks the split model.' : 'Loads only assigned shards in workers. Remote mode needs only client metadata.';
   $('local-mode').disabled = busy; $('peer-mode').disabled = busy;
 }
 function rate(id, value) {
@@ -44,27 +48,28 @@ function render(data) {
   if (busy) {
     report = null; $('download').disabled = true;
     $('output').classList.remove('has-text');
-    $('output').textContent = 'Loading model, running the baseline, then checking the split route…';
-    $('verification').textContent = '○ Verification in progress'; $('verification').className = 'verification';
+    $('output').textContent = data.job.operation === 'verify' ? 'Loading the full baseline, then checking the split route…' : 'Connecting workers and generating through the split model…';
+    $('verification').textContent = data.job.operation === 'verify' ? '○ Verification in progress' : '○ Generation in progress · no baseline loaded'; $('verification').className = 'verification';
     rate('split-speed',null); rate('local-speed',null); $('ttft').textContent='—'; $('generated').textContent='—';
   } else if (data.job.phase === 'complete') {
     report = data.job.report; $('download').disabled = false;
     $('output').classList.add('has-text'); $('output').textContent = report.distributed_text || '(No visible text; inspect the report.)';
-    rate('split-speed',report.distributed.decode_tokens_per_second); rate('local-speed',report.local.decode_tokens_per_second);
+    rate('split-speed',report.distributed.decode_tokens_per_second); rate('local-speed',report.local?.decode_tokens_per_second);
     $('ttft').textContent = report.distributed.first_token_ms.toFixed(1)+' ms'; $('generated').textContent = report.generated_tokens+' tokens';
-    $('verification').className = 'verification '+(report.passed ? 'passed' : 'failed');
-    $('verification').textContent = report.passed ? `✓ Tokens match · Max logit error ${report.maximum_logit_absolute_error}` : '✕ Verification mismatch — inspect the report';
+    $('verification').className = 'verification '+(report.operation === 'generate' ? '' : report.passed ? 'passed' : 'failed');
+    $('verification').textContent = report.operation === 'generate' ? `Generated · ${report.finish_reason === 'eos' ? 'end of response' : 'token limit reached'} · not baseline-verified` : report.passed ? `✓ Tokens match · Max logit error ${report.maximum_logit_absolute_error}` : '✕ Verification mismatch — inspect the report';
   } else if (data.job.phase === 'error') {
     $('output').textContent = data.job.error; $('output').classList.add('has-text');
     $('verification').textContent='✕ Test did not complete'; $('verification').className='verification failed';
   }
   updateButton();
 }
+$('operation').onchange = updateButton;
 $('local-mode').onclick = () => setMode('local'); $('peer-mode').onclick = () => setMode('peers');
 $('example').onclick = () => { $('prompt').value='Write a Python function called add that returns the sum of two numbers. Output only the code.'; };
 $('run').onclick = async () => {
   pending = true; updateButton(); notice('');
-  try { await api('/api/run',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:$('prompt').value,max_tokens:Number($('tokens').value),mode})}); await refresh(); }
+  try { await api('/api/run',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:$('prompt').value,max_tokens:Number($('tokens').value),mode,operation:operation()})}); await refresh(); }
   catch(error) { notice(error.message); }
   finally { pending=false; updateButton(); }
 };

@@ -50,6 +50,8 @@ impl Timing {
 
 #[derive(Serialize)]
 pub struct Report {
+    pub operation: &'static str,
+    pub finish_reason: &'static str,
     pub model_id: String,
     pub revision: String,
     pub manifest_hash: String,
@@ -59,15 +61,15 @@ pub struct Report {
     pub prompt: String,
     pub prompt_tokens: usize,
     pub generated_tokens: usize,
-    pub local_text: String,
+    pub local_text: Option<String>,
     pub distributed_text: String,
-    pub local_token_ids: Vec<u32>,
+    pub local_token_ids: Option<Vec<u32>>,
     pub distributed_token_ids: Vec<u32>,
-    pub tokens_match: bool,
-    pub maximum_logit_absolute_error: f32,
-    pub logit_tolerance: f32,
-    pub passed: bool,
-    pub local: Timing,
+    pub tokens_match: Option<bool>,
+    pub maximum_logit_absolute_error: Option<f32>,
+    pub logit_tolerance: Option<f32>,
+    pub passed: Option<bool>,
+    pub local: Option<Timing>,
     pub distributed: Timing,
     pub workers: Vec<Info>,
     pub last_trace: Vec<Trace>,
@@ -294,6 +296,15 @@ async fn step(http: &reqwest::Client, token: &str, frame: &Frame) -> Result<Fram
 }
 
 pub async fn run(options: Options) -> Result<Report> {
+    execute(options, true).await
+}
+
+/// Generate using shard workers only; never open the complete checkpoint or create a local model.
+pub async fn generate(options: Options) -> Result<Report> {
+    execute(options, false).await
+}
+
+async fn execute(options: Options, verify: bool) -> Result<Report> {
     ensure!(
         (1..=128).contains(&options.max_tokens),
         "max-tokens must be 1..=128"
@@ -331,16 +342,20 @@ pub async fn run(options: Options) -> Result<Report> {
         prompt.len() <= 512 && prompt.len() + options.max_tokens <= CONTEXT_LIMIT,
         "prompt/context too long for this prototype"
     );
-    let local = {
+    let local = if verify {
         let dir = dir.clone();
         let manifest = manifest.clone();
         let backend = options.device.clone();
         let prompt = prompt.clone();
         tracing::info!(device = %backend, "loading real Qwen checkpoint for unsplit baseline");
-        tokio::task::spawn_blocking(move || {
-            baseline(&dir, &manifest, &backend, &prompt, options.max_tokens)
-        })
-        .await??
+        Some(
+            tokio::task::spawn_blocking(move || {
+                baseline(&dir, &manifest, &backend, &prompt, options.max_tokens)
+            })
+            .await??,
+        )
+    } else {
+        None
     };
     // The full model is dropped before any shard processes are launched.
     let (processes, addresses) = if options.peers.is_empty() {
@@ -386,19 +401,23 @@ pub async fn run(options: Options) -> Result<Report> {
         .collect();
     let session = uuid::Uuid::new_v4().to_string();
     let measurement: Result<_> = async {
-        let _ = step(
-            &http,
-            &options.token,
-            &request(&model_hash, &session, &route, &prompt, 0),
-        )
-        .await?;
-        reset(&http, &addresses, &options.token, &session).await?;
+        if verify {
+            let _ = step(
+                &http,
+                &options.token,
+                &request(&model_hash, &session, &route, &prompt, 0),
+            )
+            .await?;
+            reset(&http, &addresses, &options.token, &session).await?;
+        }
         let mut ids = Vec::new();
         let mut times = Vec::new();
         let mut position = 0;
         let mut maximum_error = 0.0_f32;
         let mut last_trace = Vec::new();
-        for (index, reference) in local.logits.iter().enumerate() {
+        let mut finish_reason = "max_tokens";
+        let limit = local.as_ref().map_or(options.max_tokens, |b| b.ids.len());
+        for index in 0..limit {
             let context = if ids.is_empty() {
                 prompt.as_slice()
             } else {
@@ -414,23 +433,32 @@ pub async fn run(options: Options) -> Result<Report> {
             let id = greedy(&result.values)?;
             times.push(now.elapsed().as_secs_f64() * 1000.0);
             position += context.len();
-            for (got, expected) in result.values.iter().zip(reference) {
-                maximum_error = maximum_error.max((got - expected).abs());
-            }
             last_trace = result.header.trace;
             ids.push(id);
-            if id != local.ids[index] {
+            if let Some(local) = &local {
+                for (got, expected) in result.values.iter().zip(&local.logits[index]) {
+                    maximum_error = maximum_error.max((got - expected).abs());
+                }
+                if id != local.ids[index] {
+                    finish_reason = "verification_mismatch";
+                    break;
+                }
+            }
+            if id == 151645 || id == 151643 {
+                finish_reason = "eos";
                 break;
             }
         }
-        Ok((ids, times, maximum_error, last_trace))
+        Ok((ids, times, maximum_error, last_trace, finish_reason))
     }
     .await;
     let cleanup = reset(&http, &addresses, &options.token, &session).await;
-    let (ids, times, maximum_error, trace) = measurement?;
+    let (ids, times, maximum_error, trace, finish_reason) = measurement?;
     cleanup?;
-    let tokens_match = ids == local.ids;
+    let tokens_match = local.as_ref().map(|local| ids == local.ids);
     let report = Report {
+        operation: if verify { "verify" } else { "generate" },
+        finish_reason,
         model_id: manifest.model_id,
         revision: manifest.revision,
         manifest_hash: model_hash,
@@ -444,27 +472,42 @@ pub async fn run(options: Options) -> Result<Report> {
         prompt: options.prompt,
         prompt_tokens: prompt.len(),
         generated_tokens: ids.len(),
-        local_text: tokenizer
-            .decode(&local.ids, true)
-            .map_err(|e| anyhow::anyhow!("decode: {e}"))?,
+        local_text: local
+            .as_ref()
+            .map(|local| {
+                tokenizer
+                    .decode(&local.ids, true)
+                    .map_err(|e| anyhow::anyhow!("decode: {e}"))
+            })
+            .transpose()?,
         distributed_text: tokenizer
             .decode(&ids, true)
             .map_err(|e| anyhow::anyhow!("decode: {e}"))?,
         tokens_match,
-        maximum_logit_absolute_error: maximum_error,
-        logit_tolerance: 1e-3,
-        passed: tokens_match && maximum_error <= 1e-3,
-        local: Timing::from_samples(&local.times),
+        maximum_logit_absolute_error: verify.then_some(maximum_error),
+        logit_tolerance: verify.then_some(1e-3),
+        passed: tokens_match.map(|matched| matched && maximum_error <= 1e-3),
+        local: local
+            .as_ref()
+            .map(|local| Timing::from_samples(&local.times)),
         distributed: Timing::from_samples(&times),
-        local_token_ids: local.ids,
+        local_token_ids: local.map(|local| local.ids),
         distributed_token_ids: ids,
         workers: infos,
         last_trace: trace,
         notes: vec![
-            "Greedy generation with real trained weights. Every distributed logit is compared with upstream Candle's unsplit Qwen implementation until any token divergence.",
-            "Warm timings: checkpoint loading, worker startup, tokenizer initialization, and one prompt warmup per mode are excluded.",
+            if verify {
+                "Every distributed logit is compared with upstream Candle's unsplit Qwen implementation until any token divergence."
+            } else {
+                "Standalone greedy generation: no complete checkpoint is read or loaded on the client. No baseline comparison is performed; verification fields are null."
+            },
+            if verify {
+                "Warm timings: checkpoint loading, worker startup, tokenizer initialization, and one prompt warmup per mode are excluded."
+            } else {
+                "Generation timing includes the first prompt forward with no extra warmup; worker startup, file loading, and tokenizer initialization are excluded."
+            },
             "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
-            "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for verification; a production sampler would avoid this traffic.",
+            "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for token selection and optional verification; final-worker sampling would avoid this traffic.",
             "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
             "One active session per worker, 1024-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover.",
         ],

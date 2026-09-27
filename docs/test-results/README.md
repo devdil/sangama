@@ -11,3 +11,8 @@ Local runs on Apple M5 Pro (24 GB). All nodes/workers ran on one physical comput
 21 Rust tests and two Python tests passed locally. Formatting and Metal clippy checks passed.
 These are engineering checks, not production certification or worldwide performance benchmarks.
 Private identities, tokens, control-panel URLs, and model weights are excluded from the repository.
+
+Standalone generation update: `standalone-generation-test.json` records real Qwen generation from
+a metadata-only client, repeated-session cleanup, automatic workers without the original checkpoint,
+and matching token IDs against optional full-model verification. The new `tests/generation.rs`
+regression covers the metadata-only protocol path and stopping behavior without a model download.

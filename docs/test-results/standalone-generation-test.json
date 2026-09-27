@@ -1,0 +1,244 @@
+{
+  "passed": true,
+  "topology": "separate worker processes on one physical computer",
+  "checks": {
+    "client_directory_contained_no_weights": true,
+    "generation_did_not_run_a_baseline": true,
+    "second_session_matches_after_reset": true,
+    "autostart_without_original_checkpoint": true,
+    "tokens_match_separate_verification": true
+  },
+  "generation": {
+    "operation": "generate",
+    "finish_reason": "eos",
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "manifest_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+    "precision": "BF16 checkpoint converted to F32; not quantized",
+    "device": "metal",
+    "topology": "explicit supplied peer addresses; physical topology not independently verified",
+    "prompt": "Explain peer-to-peer computing in one short sentence.",
+    "prompt_tokens": 30,
+    "generated_tokens": 20,
+    "local_text": null,
+    "distributed_text": "Peer-to-peer computing allows users to connect and share resources without the need for a central server.",
+    "local_token_ids": null,
+    "distributed_token_ids": [
+      30888,
+      4686,
+      78597,
+      24231,
+      6147,
+      3847,
+      311,
+      4564,
+      323,
+      4332,
+      4963,
+      2041,
+      279,
+      1184,
+      369,
+      264,
+      8622,
+      3538,
+      13,
+      151645
+    ],
+    "tokens_match": null,
+    "maximum_logit_absolute_error": null,
+    "logit_tolerance": null,
+    "passed": null,
+    "local": null,
+    "distributed": {
+      "first_token_ms": 122.491709,
+      "decode_tokens_per_second": 78.01140615444629,
+      "total_ms": 366.045837
+    },
+    "workers": [
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 0,
+          "start": 0,
+          "end": 12,
+          "file": "shard-0-of-2.safetensors",
+          "sha256": "f4b9b8ca4a579afe37315e72462960d81ce99be33c478e12b0b1fdab80d4f0a7",
+          "file_bytes": 630182608,
+          "tensor_count": 145
+        },
+        "device": "metal",
+        "precision": "f32",
+        "pid": 86593
+      },
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 1,
+          "start": 12,
+          "end": 24,
+          "file": "shard-1-of-2.safetensors",
+          "sha256": "432b85fcd5ce8651388dfaf16618afad0d5c7d683c0080790d80d41223989a97",
+          "file_bytes": 630184608,
+          "tensor_count": 146
+        },
+        "device": "metal",
+        "precision": "f32",
+        "pid": 86594
+      }
+    ],
+    "last_trace": [
+      {
+        "shard": 0,
+        "start": 0,
+        "end": 12,
+        "forward_ms": 4.537
+      },
+      {
+        "shard": 1,
+        "start": 12,
+        "end": 24,
+        "forward_ms": 6.779667
+      }
+    ],
+    "notes": [
+      "Standalone greedy generation: no complete checkpoint is read or loaded on the client. No baseline comparison is performed; verification fields are null.",
+      "Generation timing includes the first prompt forward with no extra warmup; worker startup, file loading, and tokenizer initialization are excluded.",
+      "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
+      "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for verification; a production sampler would avoid this traffic.",
+      "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
+      "One active session per worker, 1024-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover."
+    ]
+  },
+  "verification": {
+    "operation": "verify",
+    "finish_reason": "eos",
+    "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+    "revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "manifest_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+    "precision": "BF16 checkpoint converted to F32; not quantized",
+    "device": "metal",
+    "topology": "separate worker processes over loopback on one physical computer",
+    "prompt": "Explain peer-to-peer computing in one short sentence.",
+    "prompt_tokens": 30,
+    "generated_tokens": 20,
+    "local_text": "Peer-to-peer computing allows users to connect and share resources without the need for a central server.",
+    "distributed_text": "Peer-to-peer computing allows users to connect and share resources without the need for a central server.",
+    "local_token_ids": [
+      30888,
+      4686,
+      78597,
+      24231,
+      6147,
+      3847,
+      311,
+      4564,
+      323,
+      4332,
+      4963,
+      2041,
+      279,
+      1184,
+      369,
+      264,
+      8622,
+      3538,
+      13,
+      151645
+    ],
+    "distributed_token_ids": [
+      30888,
+      4686,
+      78597,
+      24231,
+      6147,
+      3847,
+      311,
+      4564,
+      323,
+      4332,
+      4963,
+      2041,
+      279,
+      1184,
+      369,
+      264,
+      8622,
+      3538,
+      13,
+      151645
+    ],
+    "tokens_match": true,
+    "maximum_logit_absolute_error": 0.0,
+    "logit_tolerance": 0.001,
+    "passed": true,
+    "local": {
+      "first_token_ms": 27.301,
+      "decode_tokens_per_second": 92.74624582234297,
+      "total_ms": 232.16104400000003
+    },
+    "distributed": {
+      "first_token_ms": 28.540083,
+      "decode_tokens_per_second": 20.27227900656508,
+      "total_ms": 965.7805379999999
+    },
+    "workers": [
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 0,
+          "start": 0,
+          "end": 12,
+          "file": "shard-0-of-2.safetensors",
+          "sha256": "f4b9b8ca4a579afe37315e72462960d81ce99be33c478e12b0b1fdab80d4f0a7",
+          "file_bytes": 630182608,
+          "tensor_count": 145
+        },
+        "device": "metal",
+        "precision": "f32",
+        "pid": 86664
+      },
+      {
+        "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+        "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
+        "shard": {
+          "index": 1,
+          "start": 12,
+          "end": 24,
+          "file": "shard-1-of-2.safetensors",
+          "sha256": "432b85fcd5ce8651388dfaf16618afad0d5c7d683c0080790d80d41223989a97",
+          "file_bytes": 630184608,
+          "tensor_count": 146
+        },
+        "device": "metal",
+        "precision": "f32",
+        "pid": 86665
+      }
+    ],
+    "last_trace": [
+      {
+        "shard": 0,
+        "start": 0,
+        "end": 12,
+        "forward_ms": 4.525666
+      },
+      {
+        "shard": 1,
+        "start": 12,
+        "end": 24,
+        "forward_ms": 6.421583
+      }
+    ],
+    "notes": [
+      "Every distributed logit is compared with upstream Candle's unsplit Qwen implementation until any token divergence.",
+      "Warm timings: checkpoint loading, worker startup, tokenizer initialization, and one prompt warmup per mode are excluded.",
+      "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
+      "Worker forward_ms includes host/device tensor transfers. Final logits are returned to the client for verification; a production sampler would avoid this traffic.",
+      "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
+      "One active session per worker, 1024-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover."
+    ]
+  }
+}

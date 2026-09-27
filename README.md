@@ -14,33 +14,55 @@ The original deterministic numerical fixture remains available for networking te
 ```
 
 Open the private localhost URL printed in the terminal. The UI supports bootstrap joining,
-local shard advertisements, signed provider discovery, real Qwen verification, and JSON report downloads.
+local shard advertisements, signed provider discovery, standalone Qwen generation, optional verification, and JSON report downloads.
 Discovery uses **libp2p Kademlia over Noise/TCP**, with **SQLite-backed records** and persistent identities.
 See [DHT architecture and setup](docs/dht.md) and [secure peer testing](docs/secure-peer-test.md).
 Discovered devices are not automatically authorized for inference; application invitations and automatic
 shard assignment remain future work. The initial network uses private Tailscale connectivity.
 
-## Real model: run on this Mac
+## Generate text without a full local model
 
 ```sh
 cd /Users/diljit/Documents/Projects/p2p-inference
 python3 scripts/fetch-qwen.py
-./scripts/cargo run --release --locked --features metal -- qwen-test --device metal --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/qwen-test.json
+./scripts/cargo run --release --locked --features metal -- generate --device metal --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/generation.json
 ```
 
-The pinned **Qwen2.5-0.5B-Instruct** checkpoint is already downloaded on this Mac.
-The download script verifies its hashes and writes two physical SafeTensors shards.
-Rust first runs the complete model using Candle's upstream Qwen implementation, releases it,
-then starts two separate worker processes: layers 0–11 and 12–23. Each worker loads only its shard
-and keeps its own attention KV cache. Hidden activations travel directly between workers over TCP/HTTP
-using bounded binary frames. Every generated token and every logit is checked against the baseline.
-The command exits with failure on a mismatch and stops its workers automatically.
+`generate` starts two shard workers and produces text without opening the original `model.safetensors`
+or loading an unsplit model on the client. Each worker loads its assigned shard and retains its own KV cache.
+The UI defaults to **Generate text · workers only**. This is greedy generation, with the completed result
+returned at the end; streaming display and final-worker token selection are not implemented yet.
+
+With `--peers`, the client needs only `manifest.json`, `config.json`, and `tokenizer.json` in `--model-dir`:
+
+```sh
+./target/release/sangama generate --device metal --model-dir path/to/client-metadata --peers 127.0.0.1:7901,127.0.0.1:7902 --token-file .secrets/peer.token --prompt 'Explain peer-to-peer computing in one short sentence.'
+```
+
+Prepare the worker files and SSH tunnels using [the secure peer guide](docs/secure-peer-test.md).
+Without `--peers`, the same directory must also contain all shard files for automatic local workers.
+`--device` selects the local worker backend, or the expected backend reported by existing workers;
+standalone clients do not initialize a GPU. The downloader prepares a complete checkpoint plus shards,
+but you can distribute only the files required by each role.
+
+## Optional correctness verification
+
+```sh
+./target/release/sangama qwen-test --device metal --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/verification.json
+```
+
+`qwen-test` still requires the complete model locally. It runs the upstream Candle baseline, releases it,
+then compares every generated token and logit from the shard workers. The UI offers the same explicit **Verify** task.
+Generation reports have `operation: "generate"` and null baseline/comparison fields, never a fabricated verification pass.
+Both modes clean up sessions and stop any workers they launched. Reports include `finish_reason` (`eos`, `max_tokens`,
+or a verification mismatch). See [standalone generation details](docs/generation.md).
 
 This is an actual Transformer checkpoint, not simulated text or calls to a hosted API.
 Inference uses F32 on both CPU and Metal; weights are not quantized. Disk usage is about 2.25 GB
 for the original checkpoint and two shards. The tied embedding matrix appears at both endpoints,
 so two shards together are larger than the original file. These disk sizes are not runtime RAM estimates.
-Model loading, file verification, and prompt warmup are excluded from generation timings.
+Model loading and file verification are excluded from token timings. Standalone generation performs no extra warmup;
+verification warms up and resets the prompt first. Their latency measurements are therefore not directly comparable.
 
 For CPU, omit `--features metal` and use `--device cpu`. Python and curl are used only to prepare model files.
 The current test supports one active conversation per worker, greedy decoding, at most 512 prompt tokens,

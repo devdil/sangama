@@ -8,12 +8,12 @@ The model is pinned Qwen2.5-0.5B-Instruct: 24 Transformer layers, hidden width 8
 F32 operations on Metal or CPU. Original BF16 tensors are converted at load time; this is not quantization.
 
 1. `fetch-qwen.py` verifies original weights/config/tokenizer and partitions tensor data into actual shard files.
-2. The client validates hashes, tokenizes the chat prompt, and runs upstream Candle's unsplit Qwen baseline.
-3. The complete baseline model is dropped before workers start.
+2. The client validates hashes and tokenizes the chat prompt. Only optional `qwen-test` runs the unsplit baseline.
+3. `generate` never loads a complete local model. In verification mode, the baseline is dropped before automatic workers start.
 4. Worker 0 embeds tokens and executes layers [0,12); worker 1 executes [12,24), final normalization, and output projection.
 5. Workers own KV caches for their layers. Every step carries a session, position, manifest identity, shape, and explicit route.
 6. Hidden activations pass directly between workers. The final logits return through the chain for greedy sampling and comparison.
-7. The client compares every logit and token against the independent upstream implementation, then resets sessions.
+7. Generation stops at EOS/token limit and resets sessions. Optional verification also compares logits and tokens against upstream Candle.
 
 Weights remain resident. One conversation is admitted per worker, with a 60-second idle lease.
 Prefill uses a causal mask; decoding appends to cached keys/values. Warmup is followed by cache reset.
@@ -35,7 +35,8 @@ No phone client or Kimi/MoE expert backend has been implemented here.
 
 ## Speed and measurement
 
-The real-model checker reports first-token latency and decode tokens/second after prompt warmup.
+The verification checker reports first-token latency and decode tokens/second after prompt warmup.
+Standalone generation reports these without an extra warmup and requires no full local checkpoint.
 Model download, hash checks, model loading, process startup, and tokenizer initialization are excluded.
 Counts include EOS; decode rate excludes the first token. Single short runs are correctness smoke tests,
 not steady-state capacity claims. Both local workers share the same GPU and memory bandwidth on this Mac.

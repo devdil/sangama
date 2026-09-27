@@ -80,6 +80,25 @@ enum Command {
         #[arg(long, value_delimiter = ',')]
         peers: Vec<SocketAddr>,
     },
+    /// Generate text through shard workers without loading a complete local model.
+    Generate {
+        #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
+        model_dir: PathBuf,
+        #[arg(long, default_value = "cpu", value_parser = ["cpu", "metal"])]
+        device: String,
+        #[arg(
+            long,
+            default_value = "Explain peer-to-peer computing in one short sentence."
+        )]
+        prompt: String,
+        #[arg(long, default_value_t = 32)]
+        max_tokens: usize,
+        /// Existing workers in shard order; omit to launch separate local processes.
+        #[arg(long, value_delimiter = ',')]
+        peers: Vec<SocketAddr>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Compare real Qwen generation against an unsplit baseline using separate workers.
     QwenTest {
         #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
@@ -282,6 +301,31 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Command::Generate {
+            model_dir,
+            device,
+            prompt,
+            max_tokens,
+            peers,
+            output,
+        } => {
+            let token = if peers.is_empty() {
+                cli.token
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+            } else {
+                token(cli.token)?
+            };
+            let report = sangama::qwen::runner::generate(sangama::qwen::runner::Options {
+                model_dir,
+                device,
+                prompt,
+                max_tokens,
+                peers,
+                token,
+            })
+            .await?;
+            print_json(&report, output)?;
+        }
         Command::QwenTest {
             model_dir,
             device,
@@ -307,7 +351,7 @@ async fn main() -> Result<()> {
             .await?;
             print_json(&report, output)?;
             anyhow::ensure!(
-                report.passed,
+                report.passed == Some(true),
                 "Qwen distributed verification failed; inspect the report"
             );
         }
