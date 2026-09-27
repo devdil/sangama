@@ -580,6 +580,12 @@ pub async fn run(path: &Path) -> Result<()> {
         .timeout(Duration::from_secs(55))
         .build()?;
     let slots = Arc::new(Semaphore::new(8));
+    let owners = Arc::new(std::sync::Mutex::new(crate::mesh_owner::Owners::new(
+        c.bridges
+            .iter()
+            .map(|b| Ok((b.listen, b.peer.parse()?)))
+            .collect::<Result<_>>()?,
+    )));
     let mut pending: HashMap<rr::OutboundRequestId, (PeerId, oneshot::Sender<Reply>)> =
         HashMap::new();
     let mut quota: HashMap<PeerId, (Instant, usize, usize)> = HashMap::new();
@@ -670,14 +676,20 @@ pub async fn run(path: &Path) -> Result<()> {
                 },
                 SwarmEvent::Behaviour(BehaviourEvent::Rpc(rr::Event::Message {peer,message,..}))=>match message {
                     rr::Message::Request {request,channel,..}=>{
-                        let role_ok=membership.snapshot.members.iter().any(|m|m.peer==peer.to_string() && ["client","worker"].contains(&m.role.as_str()) && m.expires>now());
-                        if !role_ok || membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || !valid_path(&request.path) || request.body.len()>LIMIT {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,"Request denied"));continue;}
+                        let role=membership.snapshot.members.iter().find(|m|m.peer==peer.to_string() && ["client","worker"].contains(&m.role.as_str()) && m.expires>now()).map(|m|m.role.clone());
+                        let Some(role)=role else {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,"Request denied"));continue;};
+                        if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || !valid_path(&request.path) || request.body.len()>LIMIT {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,"Request denied"));continue;}
                         let q=quota.entry(peer).or_insert((Instant::now(),0,0));if q.0.elapsed()>Duration::from_secs(60) {*q=(Instant::now(),0,0);}
                         q.1+=1;q.2+=request.body.len();
                         if q.1>1200 || q.2>128*1024*1024 {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(429,"Peer quota exceeded"));continue;}
+                        // The local worker trusts one shared token; bind reservations to the verified peer here.
+                        let pending=match owners.lock().unwrap().admit(peer,&role,&request.path,&request.body,Instant::now()) {
+                            Ok(pending)=>pending,
+                            Err(reason)=>{let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,reason));continue;}
+                        };
                         let permit=slots.clone().try_acquire_owned();
                         if let (Some(address),Ok(permit))=(c.worker,permit) {
-                            let tx=tx.clone();let http=worker_http.clone();let token=token.clone();let managed=managed.clone();
+                            let tx=tx.clone();let http=worker_http.clone();let token=token.clone();let managed=managed.clone();let owners=owners.clone();
                             tokio::spawn(async move {
                                 let _permit=permit;
                                 let reply=if request.path.starts_with("/v1/node/") {
@@ -690,6 +702,7 @@ pub async fn run(path: &Path) -> Result<()> {
                                 } else if let Some(manager)=managed {
                                     if manager.ready().await {worker(http,address,token,request).await} else {Reply::error(503,"Worker is not loaded or has an active placement reservation")}
                                 } else {worker(http,address,token,request).await};
+                                if let Some(pending)=pending {owners.lock().unwrap().commit(pending,reply.status,Instant::now());}
                                 let _=tx.send(Command::Reply {peer,channel,reply}).await;
                             });
                         } else {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(503,"No available worker"));}

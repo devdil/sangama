@@ -83,7 +83,7 @@ impl Frame {
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self> {
+    fn split(bytes: &[u8]) -> Result<(Header, &[u8])> {
         ensure!(
             (4..=MAX_FRAME_BYTES).contains(&bytes.len()),
             "invalid frame size"
@@ -93,12 +93,21 @@ impl Frame {
             len <= MAX_HEADER_BYTES && len <= bytes.len() - 4,
             "invalid header length"
         );
-        let header: Header = serde_json::from_slice(&bytes[4..4 + len])?;
-        ensure!(
-            (bytes.len() - 4 - len).is_multiple_of(4),
-            "truncated f32 payload"
-        );
-        let values: Vec<_> = bytes[4 + len..]
+        Ok((
+            serde_json::from_slice(&bytes[4..4 + len])?,
+            &bytes[4 + len..],
+        ))
+    }
+
+    /// Reads only the header, for routing decisions that do not need the tensor.
+    pub fn header(bytes: &[u8]) -> Result<Header> {
+        Ok(Self::split(bytes)?.0)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let (header, payload) = Self::split(bytes)?;
+        ensure!(payload.len().is_multiple_of(4), "truncated f32 payload");
+        let values: Vec<_> = payload
             .as_chunks::<4>()
             .0
             .iter()
@@ -152,6 +161,7 @@ mod tests {
         let frame = frame();
         let mut bytes = frame.encode().unwrap();
         assert_eq!(Frame::decode(&bytes).unwrap().values, frame.values);
+        assert_eq!(Frame::header(&bytes).unwrap().session, "s");
         bytes.pop();
         assert!(Frame::decode(&bytes).is_err());
         assert!(Frame::decode(&[255; 4]).is_err());

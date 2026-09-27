@@ -139,6 +139,27 @@ any KV cache. Reservations expire after 60 seconds without use. Partial admissio
 is released on failure. Sessions stay on their route; no mid-session KV migration
 is attempted. On disconnect, retry as a new request after the worker recovers.
 
+### Reservation ownership
+
+The local worker trusts one shared bearer token, so each node's mesh layer binds
+reservations to the verified peer ID that made them (`src/mesh_owner.rs`):
+
+- Only `client` members may reserve or reset a worker session or call
+  `/v1/node/reserve`, `load` and `release`. Workers may only forward.
+- A session or placement lease can be renewed, reset or released only by the peer that reserved it.
+- When reserving shard *n*, the client names shard *n − 1*'s bridge address as
+  `upstream`. The receiving node resolves it through its **own** bridge map, then
+  accepts forwards for that session only from that peer. Shard 0 accepts only the
+  client. Every node must therefore use the same bridge map.
+- A session held longer than 10 minutes, or a placement lease longer than 5 minutes,
+  is dropped. Its owner cannot reserve on that node for 3 minutes, so other clients
+  get a turn. Normal generation and placement finish well inside these caps.
+
+A worker earlier in the route still computes the hidden state it forwards, so it
+can corrupt the output. It can no longer reset, re-reserve or inject into workers
+it does not feed. A single admitted client can still keep workers busy between
+caps; revoke its membership if that happens.
+
 ```sh
 target/release/sangama --token-file /path/client-worker-token mesh-allocate \
   --model-dir /path/metadata --candidates 127.0.0.1:7902,127.0.0.1:7901
