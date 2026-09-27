@@ -133,25 +133,32 @@ def main():
         direct=execpy(names['worker0'],f"import socket; s=socket.socket();s.settimeout(2); print(s.connect_ex(({ip1!r},9000)))").stdout.strip()
         assert direct!='0';checks['worker_networks_cannot_dial_each_other']=True
         # Reservations are exclusive and can be released by their owning session.
-        def api(port,path,body):
+        def api(port,path,body,who='client'):
             code="import json,urllib.request,urllib.error; r=urllib.request.Request('http://127.0.0.1:%d%s',data=%r,headers={'Authorization':'Bearer '+open('/state/token').read(),'Content-Type':'application/json'});\ntry: print(urllib.request.urlopen(r,timeout=15).status)\nexcept urllib.error.HTTPError as e: print(e.code)" % (port,path,json.dumps(body).encode())
-            return int(execpy(names['client'],code).stdout.strip())
+            return int(execpy(names[who],code).stdout.strip())
         import hashlib
         assignment={'lease':str(uuid.uuid4()),'model_hash':hashlib.sha256((model/'manifest.json').read_bytes()).hexdigest(),'shard':1}
-        assert api(7902,'/v1/node/load',assignment)==409
+        # Unreserved leases are refused by the mesh before reaching the worker.
+        assert api(7902,'/v1/node/load',assignment)==403
         assert api(7902,'/v1/node/reserve',assignment|{'model_hash':'0'*64})==409
         assert api(7902,'/v1/node/reserve',assignment)==200
         assert api(7902,'/v1/node/reserve',assignment|{'lease':str(uuid.uuid4())})==409
         assert api(7902,'/v1/qwen/reserve',{'session':str(uuid.uuid4())})==503
-        assert api(7902,'/v1/node/release',assignment|{'lease':str(uuid.uuid4())})==409
+        assert api(7902,'/v1/node/release',assignment|{'lease':str(uuid.uuid4())})==403
         assert api(7902,'/v1/node/release',assignment)==200
         checks['placement_lease_ownership_and_inference_exclusion']=True
         owner=str(uuid.uuid4());other=str(uuid.uuid4())
         assert api(7902,'/v1/qwen/reserve',{'session':owner})==200
         assert api(7902,'/v1/qwen/reserve',{'session':other})==409
-        assert api(7902,'/v1/qwen/reset',{'session':other})==409
+        # The mesh refuses to reset a session this peer never reserved.
+        assert api(7902,'/v1/qwen/reset',{'session':other})==403
         assert api(7902,'/v1/qwen/reset',{'session':owner})==200
         checks['exclusive_session_reservations']=True
+        # Workers forward only; they cannot reserve, reset or re-place another worker.
+        assert api(7902,'/v1/qwen/reset',{'session':owner},who='worker0')==403
+        assert api(7902,'/v1/qwen/reserve',{'session':str(uuid.uuid4())},who='worker0')==403
+        assert api(7902,'/v1/node/reserve',assignment|{'lease':str(uuid.uuid4())},who='worker0')==403
+        checks['worker_role_cannot_reserve_or_place']=True
         plan=json.loads(docker('exec',names['client'],'sangama','--token-file','/state/token','mesh-plan','--model-dir','/model','--candidates','127.0.0.1:7902,127.0.0.1:7901').stdout)
         assert plan['peers']==['127.0.0.1:7901','127.0.0.1:7902'];report['placement']=plan;checks['automatic_ready_route_selection']=True
         def read_offers():

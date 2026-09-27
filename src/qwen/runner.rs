@@ -461,10 +461,16 @@ async fn execute_chat(
     let measurement: Result<_> = async {
         // Acquire the whole route before advancing any KV cache. Cleanup below releases
         // every successfully acquired lease if a later shard refuses the session.
-        for address in &addresses {
+        for (index, address) in addresses.iter().enumerate() {
+            // Name the previous shard so an admitted mesh accepts forwards only from that peer.
+            // Workers reached directly on loopback ignore it.
+            let mut body = serde_json::json!({"session":session});
+            if index > 0 {
+                body["upstream"] = addresses[index - 1].to_string().into();
+            }
             http.post(url(*address, "/v1/qwen/reserve"))
                 .bearer_auth(&options.token)
-                .json(&serde_json::json!({"session":session}))
+                .json(&body)
                 .send()
                 .await?
                 .error_for_status()?;
