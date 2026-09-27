@@ -200,7 +200,7 @@ pub async fn account(State(app): State<App>, headers: HeaderMap) -> Response {
         return Redirect::to("/signin").into_response();
     };
     match app.db.query_opt("SELECT a.username FROM accounts a JOIN account_sessions s ON s.account_id=a.id WHERE s.token_hash=$1 AND s.expires_at>now()", &[&hash(&session)]).await {
-        Ok(Some(row)) => page("Your account", &format!("<h1>Welcome, {}.</h1><p>You are signed in.</p><p><a class=\"button\" href=\"/connect\">Connect a worker</a></p><p>Your account does not automatically admit a worker to the network.</p><form action=\"/signout\" method=\"post\"><button type=\"submit\">Sign out</button></form>",escape(row.get(0)))).into_response(),
+        Ok(Some(row)) => page("Your account", &format!("<h1>Welcome, {}.</h1><p>You are signed in.</p><form action=\"/signout\" method=\"post\"><button type=\"submit\">Sign out</button></form>",escape(row.get(0)))).into_response(),
         Ok(None) => Redirect::to("/signin").into_response(),
         Err(_) => unavailable(),
     }

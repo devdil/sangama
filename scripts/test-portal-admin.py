@@ -35,10 +35,12 @@ try:
  assert post('revoke',peer=peer,confirm='yes')[0]==200
  assert sql(f"SELECT revoked FROM network_members WHERE peer_id='{peer}'")=='t'
  assert 'Revoked' in post('inspect')[1]
- for page,expected in [('/connect','mesh-join'),('/admin','Admin credential'),('/','network membership')]:
+ for page,expected in [('/admin','Admin credential'),('/','Sign up'),('/about','How it works')]:
   assert expected in urllib.request.urlopen(BASE+page).read().decode()
+ try:urllib.request.urlopen(BASE+'/connect');raise AssertionError('/connect should be removed')
+ except urllib.error.HTTPError as e:assert e.code==404
  assert any(post('inspect',token='wrong')[0]==429 for _ in range(21))
- report={'passed':True,'checks':['operator credential required','cross-origin admin POST rejected','role validation','invitation persisted as hash','authenticated membership listing','credential not reflected','revocation confirmation required','revocation persisted and displayed','connection setup page','operator request rate limit'],'scope':'Local Docker portal and PostgreSQL; temporary membership/invitation rows removed.'}
+ report={'passed':True,'checks':['operator credential required','cross-origin admin POST rejected','role validation','invitation persisted as hash','authenticated membership listing','credential not reflected','revocation confirmation required','revocation persisted and displayed','public pages render','operator request rate limit'],'scope':'Local Docker portal and PostgreSQL; temporary membership/invitation rows removed.'}
  (ROOT/'runs/portal-admin-test.json').write_text(json.dumps(report,indent=2)+'\n')
  print(json.dumps(report,indent=2))
 finally:
