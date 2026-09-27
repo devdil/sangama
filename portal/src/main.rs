@@ -84,7 +84,8 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
             "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         ),
         ("x-content-type-options", "nosniff"),
-        ("referrer-policy", "no-referrer"),
+        // Browsers send `Origin: null` on form POSTs under no-referrer, which the origin check rejects.
+        ("referrer-policy", "same-origin"),
         ("cache-control", "no-store"),
         (
             "permissions-policy",

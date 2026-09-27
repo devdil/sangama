@@ -37,6 +37,8 @@ try:
  assert 'Revoked' in post('inspect')[1]
  for page,expected in [('/admin','Admin credential'),('/','Sign up'),('/about','How it works')]:
   assert expected in urllib.request.urlopen(BASE+page).read().decode()
+ # Under no-referrer, browsers send Origin: null on form POSTs and every signup/sign-in is rejected.
+ assert urllib.request.urlopen(BASE+'/join').headers['Referrer-Policy']=='same-origin'
  try:urllib.request.urlopen(BASE+'/connect');raise AssertionError('/connect should be removed')
  except urllib.error.HTTPError as e:assert e.code==404
  assert any(post('inspect',token='wrong')[0]==429 for _ in range(21))
