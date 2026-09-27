@@ -1,257 +1,143 @@
 # Sangama
 
-**Sangama (संगम)** — a confluence of devices, running one model together.
+**Sangama (संगम)** means confluence: devices coming together to run one AI model.
 
-A Rust foundation for running model pieces across participating computers.
+Sangama is a Rust project that lets computers share the work of running a language model. Each participating computer loads a piece of the model and passes its results to the next computer.
 
-**Status: real Qwen text generation works across separate Rust worker processes, using Candle on Metal or CPU.**
-The original deterministic numerical fixture remains available for networking tests.
+**Today:** an experimental network for trusted, invited peers. Real Qwen inference works across workers, with encrypted connections, relay support, automatic loading of prepared shards, and a local UI. It is not yet a production-ready public network.
 
-## Worker packages
+[Try it locally](#try-it-locally) · [Architecture](#architecture) · [Join a network](docs/admitted-mesh.md) · [Contribute](CONTRIBUTING.md)
 
-See [downloads, DMG, shell/PowerShell installers and native builds](docs/distribution.md).
-Packaging is a development preview; public download hosting, platform signing and seamless enrollment remain release gates.
+## The goal
 
-## Start contributing
+Make it practical to run open models across computers people already own—even when the whole model cannot fit on one device.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, a first real-model run, a source map and validation commands.
-New to the subject? Start with [LLM and P2P fundamentals](docs/fundamentals.md), then follow
-[the architecture and request flow](docs/architecture.md).
+The long-term experience is simple: install a worker, choose how much memory to contribute, join a network, and let Sangama assign useful work. The current implementation proves the pieces with **Qwen2.5-0.5B-Instruct**, a small model used for testing. Arbitrary large Qwen models, Kimi and phones are future work.
 
-## UI and distributed discovery
+Sharing a model can make it fit across devices. It does **not automatically make generation faster**: each extra network hop adds latency.
 
-See [the network UI workflow](docs/network-ui.md) for portal invitations/revocation and local capacity, placement and readiness controls.
+## How it works
 
-```sh
-./scripts/cargo run --release --locked --features metal -- ui --device metal
+A language model turns text into **tokens**—small pieces of text—and predicts the next token by passing numbers through a sequence of layers. Sangama divides those layers into **shards**, each stored and executed by a worker.
+
+For the current two-worker Qwen setup:
+
+```mermaid
+flowchart LR
+    C["Client: turn prompt into tokens"] --> A["Worker A: embedding + layers 0–11"]
+    A -->|Intermediate results| B["Worker B: layers 12–23 + choose next token"]
+    B -->|Selected token| C
 ```
 
-Open the private localhost URL printed in the terminal. The UI supports bootstrap joining,
-local shard advertisements, signed provider discovery, standalone Qwen generation, optional verification, and JSON report downloads.
-Discovery uses **libp2p Kademlia over Noise/TCP**, with **SQLite-backed records** and persistent identities.
-See [DHT architecture and setup](docs/dht.md), [secure peer testing](docs/secure-peer-test.md),
-and [Docker isolation tests](docs/docker-testing.md) for real Qwen generation and DHT discovery in separate containers.
-Discovered devices are not automatically authorized. The legacy discovery UI uses a private overlay;
-the new [admitted Internet mesh](docs/admitted-mesh.md) adds signed membership, a controlled relay,
-peer inference transport, memory-aware loading of prepared shards, ready-route planning, and session reservations.
+1. Workers load their assigned shard files into memory.
+2. The client checks that the workers cover the complete model, in the right order, and reserves them for the request.
+3. Worker A processes the input and sends its intermediate results to Worker B.
+4. Worker B finishes the computation and returns the next token.
+5. The process repeats until the response is complete.
 
-## Generate text without a full local model
+Weights stay loaded on the workers; they are not transferred for every token. Each worker also keeps its own conversation state, called a **KV cache**. A client using existing workers needs the tokenizer and model metadata, not the full model weights.
+
+Want the basics in more depth? Read [LLM and P2P fundamentals](docs/fundamentals.md).
+
+## Architecture
+
+The system separates **who may join**, **how peers find and reach each other**, and **where the model runs**.
+
+```mermaid
+flowchart TB
+    U["Local UI / OpenCode"] --> C["Client: plan route and request inference"]
+    C <-->|Encrypted peer traffic| W["Workers: load shards and run model layers"]
+    C <-.-> R["Relay: connectivity when direct paths are unavailable"]
+    R <-.-> W
+    P["Portal: invitations and membership"] --> DB[(PostgreSQL)]
+    P -.->|Signed membership| C
+    P -.->|Signed membership| W
+    P -.->|Signed membership| R
+    W <--> D["DHT: signed shard discovery; local SQLite stores"]
+```
+
+| Component | What it does |
+|---|---|
+| **Worker** | Contributes memory and compute; loads a prepared model shard and executes its layers. |
+| **Client / local UI** | Checks capacity, allocates shards, verifies a ready route and runs inference. |
+| **Portal + PostgreSQL** | Handles invitations, membership expiry, revocation and the device directory. |
+| **DHT** | Shares signed advertisements about available shards. Each node stores discovery records locally in SQLite. |
+| **Relay** | Helps admitted peers communicate when routers prevent direct connections. It does not run model layers. |
+| **OpenCode integration** | Connects a coding-assistant interface to the local chat API. Currently text-only; tools and automatic edits are disabled. |
+
+The allocator uses available memory, prepared shard files and measured probe latency to select workers. It does not yet download arbitrary models or create new shard boundaries automatically.
+
+See [the detailed architecture](docs/architecture.md) for source files, request flows and security boundaries.
+
+## What works today
+
+- Real Qwen text generation using CPU or Apple Metal.
+- Workers that load only their assigned physical shard files.
+- Peer identity verification, single-use invitations, expiring membership and revocation.
+- Encrypted libp2p connections, a controlled relay and signed DHT discovery.
+- Memory-aware shard allocation, readiness checks and exclusive request reservations.
+- Classic HTML operator pages and a local inference UI with worker status and placement controls.
+- OpenCode connected to the local API without a hosted inference provider.
+
+**Tested:** 23 isolated Docker checks, including real Qwen generation through the UI, forced relay connections, network delay, revoked members, disconnections and recovery into a new session. See [test results](docs/test-results/network-ui.md).
+
+**Still to validate:** two actual computers on separate home networks and sustained real-world performance. Simulation results are not a guarantee for every router or Internet connection.
+
+## Try it locally
+
+You need stable Rust, Python 3, curl and your platform's native build tools. Run these commands from your repository checkout. Preparing the current checkpoint and shards uses about 2.25 GB of disk space; inference needs additional RAM.
 
 ```sh
-cd /path/to/sangama
+# Download and verify the supported model; create its shard files.
 python3 scripts/fetch-qwen.py
-./scripts/cargo run --release --locked --features metal -- generate --device metal --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/generation.json
-```
 
-`generate` starts two shard workers and produces text without opening the original `model.safetensors`
-or loading an unsplit model on the client. Each worker loads its assigned shard and retains its own KV cache.
-The UI defaults to **Generate text · workers only**. This is greedy generation, with the completed result
-returned at the end. Token selection happens on the final worker; the separate chat API supports streaming responses.
-
-With `--peers`, the client needs only `manifest.json`, `config.json`, and `tokenizer.json` in `--model-dir`:
-
-```sh
-./target/release/sangama generate --device metal --model-dir path/to/client-metadata --peers 127.0.0.1:7901,127.0.0.1:7902 --token-file .secrets/peer.token --prompt 'Explain peer-to-peer computing in one short sentence.'
-```
-
-Prepare worker files and local peer aliases using [the admitted mesh guide](docs/admitted-mesh.md),
-or use SSH tunnels following [the secure peer guide](docs/secure-peer-test.md).
-Without `--peers`, the same directory must also contain all shard files for automatic local workers.
-`--device` selects the local worker backend, or the expected backend reported by existing workers;
-standalone clients do not initialize a GPU. The downloader prepares a complete checkpoint plus shards,
-but you can distribute only the files required by each role.
-
-## Optional correctness verification
-
-```sh
-./target/release/sangama qwen-test --device metal --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/verification.json
-```
-
-`qwen-test` still requires the complete model locally. It runs the upstream Candle baseline, releases it,
-then compares every generated token and logit from the shard workers. The UI offers the same explicit **Verify** task.
-Generation reports have `operation: "generate"` and null baseline/comparison fields, never a fabricated verification pass.
-Both modes clean up sessions and stop any workers they launched. Reports include `finish_reason` (`eos`, `max_tokens`,
-or a verification mismatch). See [standalone generation details](docs/generation.md).
-
-This is an actual Transformer checkpoint, not simulated text or calls to a hosted API.
-Inference uses F32 on both CPU and Metal; weights are not quantized. Disk usage is about 2.25 GB
-for the original checkpoint and two shards. The tied embedding matrix appears at both endpoints,
-so two shards together are larger than the original file. These disk sizes are not runtime RAM estimates.
-Model loading and file verification are excluded from token timings. Standalone generation performs no extra warmup;
-verification warms up and resets the prompt first. Their latency measurements are therefore not directly comparable.
-
-For CPU, omit `--features metal` and use `--device cpu`. Python and curl are used only to prepare model files.
-The current test supports one active conversation per worker, greedy decoding, at most 512 prompt tokens,
-128 generated tokens, and a 4,096-token worker context cap. The chat API accepts longer prompts using 512-token chunks. It does not yet support arbitrary Qwen/Kimi checkpoints.
-
-### Two physical devices, including Internet peers
-
-Use the [admitted mesh guide](docs/admitted-mesh.md) to connect invited peers without SSH tunnels.
-The older [secure peer test guide](docs/secure-peer-test.md) remains an alternative. Qwen workers **refuse non-loopback binds**
-and require an explicit `--allow-next` destination to forward activations. Use pinned-key SSH tunnels over
-Tailscale, private token files, and dedicated access restricted to the participating devices.
-The guide includes enrollment, exact commands, revocation, and the remaining prototype limitations.
-Do not use the old direct-LAN Qwen commands: they intentionally fail now.
-
-The real-model route remains explicit; the fixture coordinator is not integrated with Qwen.
-Both workers and the validation baseline currently need the same backend type (CPU or Metal).
-
-## Numerical networking fixture
-
-The fixture runs deterministic CPU residual matrices. It reports passes/second, never tokens/second.
-
-### Run the fixture
-
-Install stable Rust using [rustup](https://rustup.rs/). The `scripts/cargo` wrapper uses system Cargo
-unless an isolated toolchain exists in `.tools/`. Run the following commands from your repository checkout.
-
-```sh
-cd /path/to/sangama
-./scripts/cargo run --release -- doctor
-./scripts/cargo run --release -- demo
-```
-
-The demo starts a coordinator and three workers on ephemeral loopback ports, registers their shards,
-executes a direct worker-to-worker pipeline, and checks its output against an unsplit local baseline.
-Everything exits after measurement. No model download or cloud account is required.
-
-```sh
-# Each worker adds 10 ms per pass. Compare with the zero-delay report.
-./scripts/cargo run --release -- demo --workers 3 --delay-ms 10 --rounds 30 --output runs/delay-10ms.json
-
-# More numerical computation per pass, still a fixture rather than an LLM.
-./scripts/cargo run --release -- demo --layers 12 --width 512 --workers 3 --rounds 30
-```
-
-The demo uses separate async services in **one process**. It does not simulate the memory bandwidth or compute capacity of multiple machines.
-The commands below run real separate processes and also work on separate trusted LAN hosts.
-
-## Run separate processes
-
-Build once:
-
-```sh
+# Build the CPU worker and client.
 ./scripts/cargo build --release --locked
+
+# Generate through two worker processes on this computer.
+./target/release/sangama generate --device cpu \
+  --prompt 'Explain peer-to-peer computing in one short sentence.' \
+  --max-tokens 40
 ```
 
-Use the **same** `P2P_TOKEN` value in every terminal. Generate a private development value once with
-`openssl rand -hex 24`, then export that value in each terminal. Tokens are not printed in logs.
+On an Apple Silicon Mac, build with `--features metal` and run with `--device metal` to use the GPU.
 
-Terminal 1:
+To open the local UI with the CPU build:
 
 ```sh
-export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/sangama coordinator
+./target/release/sangama ui --device cpu
 ```
 
-Terminal 2:
+Open the private URL printed in the terminal. This local test runs both workers on one computer; it does not join a remote network.
 
-```sh
-export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/sangama worker --id mac-a --start 0 --end 6
-```
+For a quick test without downloading weights, run `./target/release/sangama demo`. That command uses a [numerical fixture](docs/numerical-fixture.md), not a language model.
 
-Terminal 3:
+## Join with another computer
 
-```sh
-export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/sangama worker --id mac-b --listen 127.0.0.1:7802 --start 6 --end 12
-```
+An operator must deploy the membership portal and a reachable relay. Each peer then receives a network invitation, the authority public key and a worker configuration, prepares its shard files, and starts its worker.
 
-Terminal 4:
+**Registering a device on the website does not grant network access.** The worker must prove ownership of its peer identity and redeem a network invitation.
 
-```sh
-export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/sangama peers
-./target/release/sangama plan
-./target/release/sangama bench --rounds 30 --output runs/two-processes.json
-```
+Follow [the invited-network guide](docs/admitted-mesh.md) and [UI workflow](docs/network-ui.md). Packaging for a DMG, shell installer and Windows executable is in development; signing, distribution and platform validation are not complete. See [worker packages](docs/distribution.md).
 
-Layer ranges are `[start, end)`: the end is exclusive. All workers must use the same `--layers` and `--width`.
-Press Ctrl-C to stop each long-running process. A departed worker expires after its 15-second lease;
-a request encountering a failed worker before expiry returns an explicit error. Automatic mid-request replay is not implemented.
+## Current limits
 
-## Another computer on a trusted LAN
+The supported model is pinned Qwen2.5-0.5B-Instruct, using F32 weights and greedy token selection. Workers currently serve one conversation at a time, and a route uses a matching backend type. Quantization, phone clients, arbitrary models and automatic shard downloads are not implemented.
 
-Build the project natively on that computer. If the coordinator is at `192.168.1.10` and the other worker is at `192.168.1.11`, use:
+If a worker disconnects, the active request fails. Recovery starts a new session; the old KV cache is not migrated automatically.
 
-```sh
-# Coordinator host:
-./target/release/sangama coordinator --listen 0.0.0.0:7800
-./target/release/sangama worker --id first --listen 0.0.0.0:7801 --advertise 192.168.1.10:7801 --coordinator 192.168.1.10:7800 --start 0 --end 6
+Use trusted participants. Encryption protects traffic in transit, but a worker can inspect the inference data it processes. Anonymous public participation needs further trust and abuse-resistance work.
 
-# Second host:
-./target/release/sangama worker --id second --listen 0.0.0.0:7801 --advertise 192.168.1.11:7801 --coordinator 192.168.1.10:7800 --start 6 --end 12
+## Explore or contribute
 
-# Client:
-./target/release/sangama bench --coordinator 192.168.1.10:7800
-```
+| Start here | What you will find |
+|---|---|
+| [Contributor guide](CONTRIBUTING.md) | Setup, source map, tests and useful first contributions |
+| [Fundamentals](docs/fundamentals.md) | Tokens, weights, layers, KV caches and distributed inference |
+| [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |
+| [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
+| [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
+| [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
+| [OpenCode](docs/opencode.md) | Local coding-assistant integration |
 
-Substitute actual private addresses and set the shared token. Peers need bidirectional access to their worker ports.
-The transport is HTTP/JSON with a shared bearer token, **not encrypted transport or public P2P networking**.
-Use only trusted private LANs or a private encrypted overlay; do not expose these ports publicly.
-Numeric loopback, RFC1918 IPv4, and IPv6 unique-local addresses are accepted. Public and link-local addresses are rejected.
-This legacy numerical fixture does not use the admitted mesh transport or its identity/membership controls.
-
-## Fixture capabilities
-
-- Resident CPU shards containing only their assigned matrices.
-- Authenticated registration and live probes, three-second heartbeats, and 15-second leases.
-- Exact contiguous layer coverage with a cost-based route planner and alternate shard candidates.
-- Direct activation forwarding between workers; the coordinator initiates the route.
-- Input, route, model/version, memory-budget, address, and message-size validation.
-- Bounded compute admission and explicit overload errors.
-- Local versus distributed correctness checks, p50/p95 latency, worker compute timing, and JSON reports.
-- Unit, socket-level integration, and separate-process tests.
-
-The planner uses worker calibration plus **coordinator-to-worker** probes as a placement heuristic.
-It does not yet have pairwise network measurements. `--delay-ms` adds a wait once per worker;
-it is not an emulation of WAN RTT, loss, contention, or bandwidth.
-Remaining reported overhead includes JSON/HTTP, queueing, transport, timer overshoot, and framework work.
-
-## Project layout
-
-```text
-src/main.rs         CLI: qwen-test, qwen-worker, doctor, demo, coordinator, worker, peers, plan, bench
-src/qwen/          Real Qwen shards, KV cache, binary transport, independent baseline checks
-src/protocol.rs     Fixture messages and validation
-src/kernel.rs       Deterministic numerical fixture with resident matrices
-src/server.rs       Coordinator, workers, leases, authentication, direct forwarding
-src/planner.rs      Contiguous coverage and cost-based placement
-src/benchmark.rs    Baseline checking and timing reports
-tests/              Correctness, socket integration, and process integration
-CONTRIBUTING.md     Contributor setup, checks and development workflow
-docs/fundamentals.md  LLM and peer-network concepts
-docs/architecture.md  Current architecture, source map and request lifecycle
-```
-
-## Development checks
-
-```sh
-./scripts/cargo fmt --check
-./scripts/cargo clippy --locked --all-targets -- -D warnings
-./scripts/cargo test --locked
-```
-
-## Next milestone
-
-Measure the admitted mesh between two physical home networks. Normal generation now samples at the
-final worker; the checker retains full logits. Managed shard placement, memory admission and reservation are implemented;
-automatic repartitioning, quantized weights, mid-session KV migration, speculative decoding, mobile apps,
-Kimi/MoE support, and anonymous public participation remain future work.
-See [the architecture plan](docs/architecture.md). Real-checkpoint tests are explicit commands, not part of CI;
-the automated Qwen test uses small random weights and verifies prefill, decode, and cache reset against upstream Candle.
-For Metal checks, add `--features metal` to the clippy and test commands above.
-
-## OpenCode with Sangama
-
-A local, text-only OpenCode integration now uses the real shard workers with streaming chat responses.
-Run `python3 scripts/opencode.py` after building Sangama and installing the pinned client with
-`./scripts/install-opencode.sh`. See [setup, tests, and current limits](docs/opencode.md).
-The 0.5B model is a connectivity/demo model; automatic tools and file edits are disabled.
-
-## Hosted HTML portal
-
-The separate `portal/` Rust application provides an invitation-based device directory backed by private PostgreSQL.
-See [deployment and local preview](deploy/portal/README.md). The hosted portal does not expose the local inference
-control panel or replace the DHT. Linode configuration is prepared; provisioning needs a valid Linode credential.
+The next milestone is a repeatable two-home-network test, followed by easier onboarding and measured improvements to performance and reliability.
