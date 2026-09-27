@@ -1,0 +1,71 @@
+name: sangama-portal
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    secrets: [postgres_password, app_password]
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/10-sangama.sh:ro
+    networks: [database]
+    shm_size: 128m
+    mem_limit: 512m
+    pids_limit: 128
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U postgres]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  portal:
+    image: sangama-portal:local
+    build:
+      context: ../..
+      dockerfile: deploy/portal/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PASSWORD_FILE: /run/secrets/app_password
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN}
+    secrets: [app_password]
+    networks: [database, application]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    pids_limit: 64
+  web:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST}
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [public, application]
+    depends_on: [portal]
+    mem_limit: 192m
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+networks:
+  public:
+  application:
+    internal: true
+  database:
+    internal: true
+volumes:
+  database:
+  caddy_data:
+  caddy_config:
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  app_password:
+    file: ./secrets/app_password

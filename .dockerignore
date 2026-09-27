@@ -8,3 +8,14 @@
 !ui/**
 !docker/
 !docker/**
+!portal/
+!portal/Cargo.toml
+!portal/Cargo.lock
+!portal/src/
+!portal/src/**
+!portal/static/
+!portal/static/**
+!portal/schema.sql
+!deploy/
+!deploy/portal/
+!deploy/portal/Dockerfile

@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS invitations (
+    id BIGSERIAL PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '24 hours',
+    used_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS registrations (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+    peer_id TEXT NOT NULL UNIQUE CHECK (length(peer_id) BETWEEN 32 AND 128),
+    platform TEXT NOT NULL CHECK (platform IN ('macOS','Linux','Windows','Other')),
+    memory_gib INTEGER NOT NULL CHECK (memory_gib BETWEEN 1 AND 4096),
+    invitation_id BIGINT NOT NULL UNIQUE REFERENCES invitations(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

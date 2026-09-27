@@ -1,0 +1,5 @@
+# Local test override only. Never apply on the public server.
+services:
+  portal:
+    ports: ['127.0.0.1:18080:8080']
+    networks: [public]

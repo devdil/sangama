@@ -9,3 +9,10 @@
 __pycache__/
 *.pyc
 /.mesh/
+/portal/target/
+/deploy/portal/.env
+/deploy/portal/secrets/
+/deploy/linode/.terraform/
+/deploy/linode/*.tfstate*
+/deploy/linode/*.tfplan
+/deploy/linode/*.tfvars

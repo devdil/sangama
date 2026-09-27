@@ -1,0 +1,8 @@
+{$PUBLIC_HOST} {
+    encode gzip
+    header Strict-Transport-Security "max-age=31536000"
+    request_body {
+        max_size 8KB
+    }
+    reverse_proxy portal:8080
+}

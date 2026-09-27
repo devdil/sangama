@@ -230,3 +230,9 @@ A local, text-only OpenCode integration now uses the real shard workers with str
 Run `python3 scripts/opencode.py` after building Sangama and installing the pinned client with
 `./scripts/install-opencode.sh`. See [setup, tests, and current limits](docs/opencode.md).
 The 0.5B model is a connectivity/demo model; automatic tools and file edits are disabled.
+
+## Hosted HTML portal
+
+The separate `portal/` Rust application provides an invitation-based device directory backed by private PostgreSQL.
+See [deployment and local preview](deploy/portal/README.md). The hosted portal does not expose the local inference
+control panel or replace the DHT. Linode configuration is prepared; provisioning needs a valid Linode credential.
