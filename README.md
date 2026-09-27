@@ -134,6 +134,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 |---|---|
 | [Contributor guide](CONTRIBUTING.md) | Setup, source map, tests and useful first contributions |
 | [Fundamentals](docs/fundamentals.md) | Tokens, weights, layers, KV caches and distributed inference |
+| [Large models](docs/large-models.md) | Peers needed and expected speed for Qwen3.5-397B, Kimi K2.6 and larger |
 | [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |
 | [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
