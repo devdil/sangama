@@ -114,10 +114,11 @@ fn validate(input: &Completion) -> Result<usize> {
     let limit = input
         .max_tokens
         .or(input.max_completion_tokens)
-        .unwrap_or(128);
+        .unwrap_or(crate::qwen::OUTPUT_LIMIT);
     anyhow::ensure!(
-        (1..=128).contains(&limit),
-        "output limit must be 1..128 tokens"
+        (1..=crate::qwen::OUTPUT_LIMIT).contains(&limit),
+        "output limit must be 1..{} tokens",
+        crate::qwen::OUTPUT_LIMIT
     );
     runner::format_chat(&input.messages)?;
     Ok(limit)
@@ -256,12 +257,12 @@ mod tests {
             json!({"model":MODEL,"messages":[{"role":"user","content":"hello"}],"temperature":0});
         assert_eq!(
             validate(&serde_json::from_value(base.clone()).unwrap()).unwrap(),
-            128
+            crate::qwen::OUTPUT_LIMIT
         );
         for (key, value) in [
             ("tools", json!([{"type":"function"}])),
             ("temperature", json!(0.5)),
-            ("max_tokens", json!(129)),
+            ("max_tokens", json!(crate::qwen::OUTPUT_LIMIT + 1)),
             ("n", json!(2)),
             ("stop", json!(["x"])),
             ("model", json!("other")),

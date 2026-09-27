@@ -363,8 +363,9 @@ async fn execute_chat(
     deltas: Option<tokio::sync::mpsc::Sender<String>>,
 ) -> Result<Report> {
     ensure!(
-        (1..=128).contains(&options.max_tokens),
-        "max-tokens must be 1..=128"
+        (1..=super::OUTPUT_LIMIT).contains(&options.max_tokens),
+        "max-tokens must be 1..={}",
+        super::OUTPUT_LIMIT
     );
     ensure!(
         !options.prompt.trim().is_empty() && options.prompt.len() <= 16 * 1024,
