@@ -1,8 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let key = /^[a-f0-9]{64}$/.test(location.hash.slice(1)) ? location.hash.slice(1) : '';
-if (key) { sessionStorage.setItem('mesh-ui-key', key); history.replaceState(null, '', '/'); }
-key ||= sessionStorage.getItem('mesh-ui-key') || '';
+if (key) { sessionStorage.setItem('sangama-ui-key', key); history.replaceState(null, '', '/'); }
+key ||= sessionStorage.getItem('sangama-ui-key') || '';
 let mode = 'local', config = null, report = null, busy = false, pending = false;
 const notice = message => { $('notice').textContent = message; $('notice').hidden = !message; };
 async function api(path, options = {}) {
@@ -71,7 +71,7 @@ $('run').onclick = async () => {
 $('download').onclick = () => {
   if (!report) return;
   const url = URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
-  const a = document.createElement('a'); a.href=url; a.download='mesh-qwen-report.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const a = document.createElement('a'); a.href=url; a.download='sangama-qwen-report.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 async function refresh() {
   try { render(await api('/api/status')); notice(config.model_ready ? '' : 'Prepare the pinned checkpoint first: python3 scripts/fetch-qwen.py'); }

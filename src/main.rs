@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use p2p_inference::{
+use sangama::{
     benchmark,
     kernel::Shard,
     protocol::*,
@@ -13,7 +13,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Rust distributed-execution lab with real Qwen layer sharding and numerical fixtures."
+    about = "Sangama: distributed inference with Qwen layer sharding and Kademlia discovery."
 )]
 struct Cli {
     #[arg(long, global = true, env = "P2P_TOKEN", hide_env_values = true)]
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
         .init();
     let mut cli = Cli::parse();
     if let Some(path) = &cli.token_file {
-        cli.token = Some(p2p_inference::security::read_token(path)?);
+        cli.token = Some(sangama::security::read_token(path)?);
     }
     match cli.command {
         Command::DhtNode {
@@ -229,11 +229,11 @@ async fn main() -> Result<()> {
                 (1..=120).contains(&wait_seconds),
                 "wait-seconds must be 1..120"
             );
-            let node = p2p_inference::dht::start(state_dir, listen, bootstrap).await?;
+            let node = sangama::dht::start(state_dir, listen, bootstrap).await?;
             println!("{}", serde_json::to_string(&node.handle.snapshot().await)?);
             if let Some(model_hash) = model_hash {
                 node.handle
-                    .publish(p2p_inference::dht::Offer {
+                    .publish(sangama::dht::Offer {
                         model_hash,
                         start,
                         end,
@@ -271,8 +271,8 @@ async fn main() -> Result<()> {
             device,
             peers,
         } => {
-            let node = p2p_inference::dht::start(dht_dir, dht_listen, bootstrap).await?;
-            p2p_inference::ui::serve(
+            let node = sangama::dht::start(dht_dir, dht_listen, bootstrap).await?;
+            sangama::ui::serve(
                 listen,
                 model_dir,
                 device,
@@ -296,7 +296,7 @@ async fn main() -> Result<()> {
             } else {
                 token(cli.token)?
             };
-            let report = p2p_inference::qwen::runner::run(p2p_inference::qwen::runner::Options {
+            let report = sangama::qwen::runner::run(sangama::qwen::runner::Options {
                 model_dir,
                 device,
                 prompt,
@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
             listen,
             allow_next,
         } => {
-            p2p_inference::qwen::network::serve(
+            sangama::qwen::network::serve(
                 &model_dir,
                 shard,
                 &device,

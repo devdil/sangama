@@ -1,4 +1,4 @@
-use p2p_inference::{protocol::*, server};
+use sangama::{protocol::*, server};
 use std::{
     net::TcpListener,
     process::{Child, Command, Stdio},
@@ -14,7 +14,7 @@ impl Drop for Process {
 }
 fn start(args: &[&str]) -> Process {
     Process(
-        Command::new(env!("CARGO_BIN_EXE_p2p-inference"))
+        Command::new(env!("CARGO_BIN_EXE_sangama"))
             .args(args)
             .env("P2P_TOKEN", "process-test-token-only")
             .stdout(Stdio::null())
@@ -97,7 +97,7 @@ async fn standalone_coordinator_workers_and_bench_interoperate() {
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
     assert!(registered, "workers did not register");
-    let output = Command::new(env!("CARGO_BIN_EXE_p2p-inference"))
+    let output = Command::new(env!("CARGO_BIN_EXE_sangama"))
         .args(["bench", "--coordinator", &coordinator, "--rounds", "2"])
         .env("P2P_TOKEN", "process-test-token-only")
         .output()

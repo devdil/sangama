@@ -2,7 +2,7 @@ use libp2p::{
     identity::Keypair,
     kad::{ProviderRecord, Record, RecordKey, store::RecordStore},
 };
-use p2p_inference::dht::{
+use sangama::dht::{
     self, Offer,
     record::{PREFIX, Signed},
     store::SqliteStore,

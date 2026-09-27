@@ -21,7 +21,7 @@ The default DHT listener is an ephemeral localhost port, useful for local testin
 For remote peers, bind the DHT to your exact Tailscale IP, e.g.:
 
 ```sh
-./target/release/p2p-inference ui --device metal --dht-listen /ip4/100.64.1.10/tcp/9000
+./target/release/sangama ui --device metal --dht-listen /ip4/100.64.1.10/tcp/9000
 ```
 
 Replace the example address with your device's actual address. Share the resulting node multiaddress
@@ -37,13 +37,13 @@ Use more than one bootstrap node for deployment so discovery does not depend on 
 
 ```sh
 # Terminal 1: bootstrap. Copy the address from the first JSON line.
-./target/release/p2p-inference dht-node --state-dir .mesh/bootstrap --listen /ip4/127.0.0.1/tcp/9000
+./target/release/sangama dht-node --state-dir .mesh/bootstrap --listen /ip4/127.0.0.1/tcp/9000
 
 # Terminal 2: provider. Substitute BOOTSTRAP_ADDRESS and the manifest SHA256.
-./target/release/p2p-inference dht-node --state-dir .mesh/provider --listen /ip4/127.0.0.1/tcp/9001 --bootstrap BOOTSTRAP_ADDRESS --model-hash MANIFEST_SHA256 --start 12 --end 24
+./target/release/sangama dht-node --state-dir .mesh/provider --listen /ip4/127.0.0.1/tcp/9001 --bootstrap BOOTSTRAP_ADDRESS --model-hash MANIFEST_SHA256 --start 12 --end 24
 
 # Terminal 3: seeker knows only the bootstrap, not the provider.
-./target/release/p2p-inference dht-node --state-dir .mesh/seeker --listen /ip4/127.0.0.1/tcp/0 --bootstrap BOOTSTRAP_ADDRESS --find-model MANIFEST_SHA256
+./target/release/sangama dht-node --state-dir .mesh/seeker --listen /ip4/127.0.0.1/tcp/0 --bootstrap BOOTSTRAP_ADDRESS --find-model MANIFEST_SHA256
 ```
 
 A node address looks like `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`.
@@ -96,3 +96,9 @@ These local tests do not establish worldwide reachability, performance, or hosti
 
 Primary APIs: [libp2p Kademlia](https://docs.rs/libp2p/0.56.0/libp2p/kad/index.html),
 [RecordStore](https://docs.rs/libp2p/0.56.0/libp2p/kad/store/trait.RecordStore.html).
+
+## Naming compatibility
+
+The project and executable are named Sangama. Existing `/mesh/...` protocol and record namespaces,
+`.mesh/` state directories, and `P2P_TOKEN` environment variables are retained for compatibility.
+Renaming the app does not replace existing node identities or invalidate discovery records.

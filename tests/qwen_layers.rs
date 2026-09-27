@@ -1,7 +1,7 @@
 use candle::{DType, Device, Tensor};
 use candle_nn::{Activation, VarBuilder, VarMap};
 use candle_transformers::models::qwen2::{Config, ModelForCausalLM};
-use p2p_inference::qwen::model::ShardedModel;
+use sangama::qwen::model::ShardedModel;
 
 #[test]
 fn qwen_shards_match_upstream_prefill_decode_and_cache_reset() {

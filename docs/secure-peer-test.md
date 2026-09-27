@@ -122,7 +122,7 @@ environment values if they conflict. Each separate test pair should use a fresh 
 Peer terminal (keep running):
 
 ```sh
-./target/release/p2p-inference qwen-worker --device metal --shard 1 --listen 127.0.0.1:7902 --token-file .secrets/peer.token
+./target/release/sangama qwen-worker --device metal --shard 1 --listen 127.0.0.1:7902 --token-file .secrets/peer.token
 ```
 
 Your Mac, terminal 1:
@@ -139,13 +139,13 @@ Keep the terminal open. No secret values appear in the command.
 Your Mac, terminal 2:
 
 ```sh
-./target/release/p2p-inference qwen-worker --device metal --shard 0 --listen 127.0.0.1:7901 --allow-next 127.0.0.1:7902 --token-file .secrets/peer.token
+./target/release/sangama qwen-worker --device metal --shard 0 --listen 127.0.0.1:7901 --allow-next 127.0.0.1:7902 --token-file .secrets/peer.token
 ```
 
 Your Mac, terminal 3:
 
 ```sh
-./target/release/p2p-inference qwen-test --device metal --peers 127.0.0.1:7901,127.0.0.1:7902 --token-file .secrets/peer.token --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/secure-two-device.json
+./target/release/sangama qwen-test --device metal --peers 127.0.0.1:7901,127.0.0.1:7902 --token-file .secrets/peer.token --prompt 'Explain peer-to-peer computing in one short sentence.' --max-tokens 40 --output runs/secure-two-device.json
 ```
 
 Expected: `passed: true`, identical token IDs, maximum logit error <= 0.001, two distinct worker identities.

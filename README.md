@@ -1,4 +1,6 @@
-# P2P Inference
+# Sangama
+
+**Sangama (संगम)** — a confluence of devices, running one model together.
 
 A Rust foundation for running model pieces across participating computers.
 
@@ -100,30 +102,30 @@ Terminal 1:
 
 ```sh
 export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/p2p-inference coordinator
+./target/release/sangama coordinator
 ```
 
 Terminal 2:
 
 ```sh
 export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/p2p-inference worker --id mac-a --start 0 --end 6
+./target/release/sangama worker --id mac-a --start 0 --end 6
 ```
 
 Terminal 3:
 
 ```sh
 export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/p2p-inference worker --id mac-b --listen 127.0.0.1:7802 --start 6 --end 12
+./target/release/sangama worker --id mac-b --listen 127.0.0.1:7802 --start 6 --end 12
 ```
 
 Terminal 4:
 
 ```sh
 export P2P_TOKEN='paste-the-same-generated-token-in-every-terminal'
-./target/release/p2p-inference peers
-./target/release/p2p-inference plan
-./target/release/p2p-inference bench --rounds 30 --output runs/two-processes.json
+./target/release/sangama peers
+./target/release/sangama plan
+./target/release/sangama bench --rounds 30 --output runs/two-processes.json
 ```
 
 Layer ranges are `[start, end)`: the end is exclusive. All workers must use the same `--layers` and `--width`.
@@ -136,14 +138,14 @@ Build the project natively on that computer. If the coordinator is at `192.168.1
 
 ```sh
 # Coordinator host:
-./target/release/p2p-inference coordinator --listen 0.0.0.0:7800
-./target/release/p2p-inference worker --id first --listen 0.0.0.0:7801 --advertise 192.168.1.10:7801 --coordinator 192.168.1.10:7800 --start 0 --end 6
+./target/release/sangama coordinator --listen 0.0.0.0:7800
+./target/release/sangama worker --id first --listen 0.0.0.0:7801 --advertise 192.168.1.10:7801 --coordinator 192.168.1.10:7800 --start 0 --end 6
 
 # Second host:
-./target/release/p2p-inference worker --id second --listen 0.0.0.0:7801 --advertise 192.168.1.11:7801 --coordinator 192.168.1.10:7800 --start 6 --end 12
+./target/release/sangama worker --id second --listen 0.0.0.0:7801 --advertise 192.168.1.11:7801 --coordinator 192.168.1.10:7800 --start 6 --end 12
 
 # Client:
-./target/release/p2p-inference bench --coordinator 192.168.1.10:7800
+./target/release/sangama bench --coordinator 192.168.1.10:7800
 ```
 
 Substitute actual private addresses and set the shared token. Peers need bidirectional access to their worker ports.

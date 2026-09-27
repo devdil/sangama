@@ -1,4 +1,4 @@
-use p2p_inference::{
+use sangama::{
     kernel::{Shard, fixture_input},
     planner::plan,
     protocol::*,
