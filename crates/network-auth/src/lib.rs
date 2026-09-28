@@ -1,4 +1,5 @@
 //! Shared membership wire format. Authority keys are pinned out of band.
+pub mod credits;
 use anyhow::{Result, ensure};
 pub use libp2p_identity;
 use libp2p_identity::{Keypair, PublicKey};

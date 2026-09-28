@@ -16,6 +16,8 @@ use std::{
 pub const MODEL_ID: &str = "Qwen/Qwen2.5-0.5B-Instruct";
 pub const REVISION: &str = "7ae557604adf67be50417f59c2c2f167def9a775";
 pub const WEIGHTS_SHA256: &str = "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe";
+/// Decoder layers in the supported checkpoint.
+pub const LAYERS: usize = 24;
 pub const CONTEXT_LIMIT: usize = 4096;
 /// Largest completion one request may ask for; prompt plus output must still fit CONTEXT_LIMIT.
 pub const OUTPUT_LIMIT: usize = 512;

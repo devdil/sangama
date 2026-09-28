@@ -1,5 +1,6 @@
 pub mod benchmark;
 pub mod chat_api;
+mod credits;
 pub mod dht;
 pub mod kernel;
 pub mod planner;

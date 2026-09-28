@@ -17,7 +17,9 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent, behaviour::toggle::Toggle},
     yamux,
 };
-use sangama_network_auth::{Join, SignedSnapshot, libp2p_identity::PublicKey, now, proof};
+use sangama_network_auth::{
+    Join, SignedSnapshot, credits::SignedStanding, libp2p_identity::PublicKey, now, proof,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -104,6 +106,7 @@ enum Command {
     },
     Membership(SignedSnapshot),
     Offer(crate::qwen::network::Info),
+    Standing(Option<SignedStanding>),
     Discover(oneshot::Sender<Reply>),
     Status(PeerId, oneshot::Sender<Reply>),
 }
@@ -113,6 +116,8 @@ struct Proxy {
     peer: PeerId,
     token: String,
     slots: Arc<Semaphore>,
+    meter: Arc<std::sync::Mutex<crate::credits::Meter>>,
+    bridges: Arc<HashMap<SocketAddr, PeerId>>,
 }
 fn valid_path(path: &str) -> bool {
     [
@@ -192,20 +197,72 @@ async fn proxy(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     match tokio::time::timeout(Duration::from_secs(65), rx).await {
-        Ok(Ok(reply)) => (
-            StatusCode::from_u16(reply.status).unwrap_or(StatusCode::BAD_GATEWAY),
-            [(
-                "content-type",
-                if path.ends_with("forward") {
-                    "application/octet-stream"
-                } else {
-                    "application/json"
-                },
-            )],
-            reply.body,
-        )
-            .into_response(),
+        Ok(Ok(reply)) => {
+            if (200..300).contains(&reply.status) {
+                meter_client(&s, path, &bytes, &reply.body);
+            }
+            (
+                StatusCode::from_u16(reply.status).unwrap_or(StatusCode::BAD_GATEWAY),
+                [(
+                    "content-type",
+                    if path.ends_with("forward") {
+                        "application/octet-stream"
+                    } else {
+                        "application/json"
+                    },
+                )],
+                reply.body,
+            )
+                .into_response()
+        }
         _ => StatusCode::GATEWAY_TIMEOUT.into_response(),
+    }
+}
+/// Counts this client's sessions: which peer took each stage, and the tokens the route returned.
+fn meter_client(s: &Proxy, path: &str, request: &[u8], reply: &[u8]) {
+    let now = Instant::now();
+    if path == "/v1/qwen/info" {
+        if let Ok(info) = serde_json::from_slice::<crate::qwen::network::Info>(reply) {
+            s.meter.lock().unwrap().record_info(
+                s.peer,
+                &info.model_hash,
+                (info.shard.start as u32, info.shard.end as u32),
+            );
+        }
+    } else if path == "/v1/qwen/reserve" {
+        #[derive(Deserialize)]
+        struct Reserve {
+            session: String,
+            #[serde(default)]
+            upstream: Option<SocketAddr>,
+        }
+        let Ok(r) = serde_json::from_slice::<Reserve>(request) else {
+            return;
+        };
+        let upstream = match r.upstream {
+            Some(address) => match s.bridges.get(&address) {
+                Some(peer) => Some(*peer),
+                None => return,
+            },
+            None => None,
+        };
+        s.meter
+            .lock()
+            .unwrap()
+            .record_reserve(&r.session, s.peer, upstream, now);
+    } else if path == "/v1/qwen/forward" {
+        use crate::qwen::wire::Frame;
+        let (Ok(sent), Ok(output)) = (Frame::header(request), Frame::header(reply)) else {
+            return;
+        };
+        if output.session == sent.session && output.position == sent.position {
+            s.meter.lock().unwrap().record_usage(
+                &sent.session,
+                &sent.model_hash,
+                sent.seq_len as u64,
+                now,
+            );
+        }
     }
 }
 fn client(portal: &str, test_http: bool) -> Result<reqwest::Client> {
@@ -395,6 +452,12 @@ pub async fn run(path: &Path) -> Result<()> {
         None
     };
     let signing_key = key.clone();
+    let outbox = Arc::new(tokio::sync::Mutex::new(crate::credits::Outbox::default()));
+    let meter = Arc::new(std::sync::Mutex::new(crate::credits::Meter::new(
+        me,
+        c.network.clone(),
+        crate::qwen::LAYERS as u32,
+    )));
     let store = crate::mesh_store::Store::open(
         &c.state_dir.join("mesh-discovery.sqlite"),
         me,
@@ -518,6 +581,12 @@ pub async fn run(path: &Path) -> Result<()> {
         None
     };
     let (tx, mut rx) = mpsc::channel(32);
+    let bridges: Arc<HashMap<SocketAddr, PeerId>> = Arc::new(
+        c.bridges
+            .iter()
+            .map(|b| Ok((b.listen, b.peer.parse()?)))
+            .collect::<Result<_>>()?,
+    );
     for b in &c.bridges {
         let listener = tokio::net::TcpListener::bind(b.listen).await?;
         let proxy = Proxy {
@@ -525,6 +594,8 @@ pub async fn run(path: &Path) -> Result<()> {
             peer: b.peer.parse()?,
             token: token.clone(),
             slots: Arc::new(Semaphore::new(4)),
+            meter: meter.clone(),
+            bridges: bridges.clone(),
         };
         let app = Router::new()
             .fallback(any(proxy_handler))
@@ -533,6 +604,39 @@ pub async fn run(path: &Path) -> Result<()> {
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
                 tracing::error!(%e,"bridge stopped");
+            }
+        });
+    }
+    {
+        // Receipts are signed once a session has finished and sent in the background.
+        let meter = meter.clone();
+        let outbox = outbox.clone();
+        let key = signing_key.clone();
+        let receipt_http = http.clone();
+        let portal = c.portal.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let receipts = meter.lock().unwrap().drain(Instant::now(), false);
+                let mut outbox = outbox.lock().await;
+                crate::credits::sign(receipts, &key, &mut outbox);
+                outbox.flush(&receipt_http, &portal).await;
+            }
+        });
+        let tx = tx.clone();
+        let http = http.clone();
+        let portal = c.portal.clone();
+        let network = c.network.clone();
+        let authority = authority.clone();
+        tokio::spawn(async move {
+            loop {
+                // A failed fetch keeps the last standing until it expires.
+                if let Ok(s) = crate::credits::standing(&http, &portal, &authority, &network).await
+                    && tx.send(Command::Standing(s)).await.is_err()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(10)).await;
             }
         });
     }
@@ -591,13 +695,16 @@ pub async fn run(path: &Path) -> Result<()> {
     let mut quota: HashMap<PeerId, (Instant, usize, usize)> = HashMap::new();
     let mut ad_quota: HashMap<PeerId, (Instant, usize)> = HashMap::new();
     let mut offers: HashMap<PeerId, crate::mesh_store::Offer> = HashMap::new();
+    let mut standing: Option<SignedStanding> = None;
     let mut connections: HashMap<libp2p::swarm::ConnectionId, (PeerId, bool)> = HashMap::new();
     let mut search_tick = tokio::time::interval(Duration::from_secs(10));
     let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let shutdown = shutdown();
+    tokio::pin!(shutdown);
     tracing::info!(peer=%me,role=own_role,"mesh started");
     loop {
         tokio::select! {
-            _=tokio::signal::ctrl_c()=>break,
+            _=&mut shutdown=>break,
             _=search_tick.tick()=>{
                 if membership.snapshot.expires>now() && allowed.contains(&me) {
                     for m in membership.snapshot.members.iter().filter(|m|m.role=="worker" && m.expires>now()).take(32) {
@@ -641,6 +748,7 @@ pub async fn run(path: &Path) -> Result<()> {
                             && let Ok(r)=o.record() {offers.insert(me,o);let _=swarm.behaviour_mut().kad.put_record(r,libp2p::kad::Quorum::One);}
                 },
                 Command::Membership(s)=> {if s.snapshot.issued>=membership.snapshot.issued {membership=s;}},
+                Command::Standing(s)=>standing=s,
                 Command::Call {peer,request,result}=>{
                     if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || pending.len()>=16 {let _=result.send(Reply::error(403,"Membership unavailable or capacity exceeded"));continue;}
                     let id=swarm.behaviour_mut().rpc.send_request(&peer,request);pending.insert(id,(peer,result));
@@ -682,14 +790,20 @@ pub async fn run(path: &Path) -> Result<()> {
                         let q=quota.entry(peer).or_insert((Instant::now(),0,0));if q.0.elapsed()>Duration::from_secs(60) {*q=(Instant::now(),0,0);}
                         q.1+=1;q.2+=request.body.len();
                         if q.1>1200 || q.2>128*1024*1024 {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(429,"Peer quota exceeded"));continue;}
+                        if request.path=="/v1/qwen/reserve" && crate::credits::over_allowance(standing.as_ref(),&peer) {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(402,"Credit allowance used up: contribute a worker or wait for credits"));continue;}
                         // The local worker trusts one shared token; bind reservations to the verified peer here.
                         let pending=match owners.lock().unwrap().admit(peer,&role,&request.path,&request.body,Instant::now()) {
                             Ok(pending)=>pending,
                             Err(reason)=>{let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,reason));continue;}
                         };
+                        // Forwards are billed to the client that reserved the session, for this node's layers.
+                        let billed=match (&pending,request.path.as_str()) {
+                            (Some(p),"/v1/qwen/forward")=>crate::qwen::wire::Frame::header(&request.body).ok().map(|h|(p.owner(),h)),
+                            _=>None,
+                        };
                         let permit=slots.clone().try_acquire_owned();
                         if let (Some(address),Ok(permit))=(c.worker,permit) {
-                            let tx=tx.clone();let http=worker_http.clone();let token=token.clone();let managed=managed.clone();let owners=owners.clone();
+                            let tx=tx.clone();let http=worker_http.clone();let token=token.clone();let managed=managed.clone();let owners=owners.clone();let meter=meter.clone();
                             tokio::spawn(async move {
                                 let _permit=permit;
                                 let reply=if request.path.starts_with("/v1/node/") {
@@ -703,6 +817,12 @@ pub async fn run(path: &Path) -> Result<()> {
                                     if manager.ready().await {worker(http,address,token,request).await} else {Reply::error(503,"Worker is not loaded or has an active placement reservation")}
                                 } else {worker(http,address,token,request).await};
                                 if let Some(pending)=pending {owners.lock().unwrap().commit(pending,reply.status,Instant::now());}
+                                if let Some((consumer,sent))=billed && (200..300).contains(&reply.status)
+                                    && let Ok(output)=crate::qwen::wire::Frame::header(&reply.body)
+                                    // The trace entry at this node's position was written by its own worker.
+                                    && let Some(own)=output.trace.get(sent.trace.len()) {
+                                    meter.lock().unwrap().record_work(&sent.session,consumer,&sent.model_hash,(own.start as u32,own.end as u32),sent.seq_len as u64,Instant::now());
+                                }
                                 let _=tx.send(Command::Reply {peer,channel,reply}).await;
                             });
                         } else {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(503,"No available worker"));}
@@ -717,7 +837,39 @@ pub async fn run(path: &Path) -> Result<()> {
             }
         }
     }
+    // Report every metered session, finished or not, so a restart does not forfeit earned credits.
+    let receipts = meter.lock().unwrap().drain(Instant::now(), true);
+    let mut outbox = outbox.lock().await;
+    crate::credits::sign(receipts, &signing_key, &mut outbox);
+    if tokio::time::timeout(Duration::from_secs(4), outbox.flush(&http, &c.portal))
+        .await
+        .is_err()
+    {
+        tracing::warn!("portal unreachable; unsent credit receipts were dropped at shutdown");
+    }
     Ok(())
+}
+/// Completes on Ctrl-C or, on Unix, SIGTERM (how the node launcher stops its children).
+async fn shutdown() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {},
+                    _ = term.recv() => {},
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 // Reject loopback/link-local advertisements: otherwise an admitted peer could cause local dialing.
 fn safe_direct(a: &Multiaddr) -> bool {

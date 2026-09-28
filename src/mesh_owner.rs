@@ -68,6 +68,13 @@ pub struct Pending {
     release: bool,
 }
 
+impl Pending {
+    /// The client that reserved the session or lease.
+    pub fn owner(&self) -> PeerId {
+        self.owner
+    }
+}
+
 pub struct Owners {
     sessions: Table,
     leases: Table,

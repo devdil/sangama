@@ -63,6 +63,7 @@ flowchart TB
 | **Portal + PostgreSQL** | Handles invitations, membership expiry, revocation and the device directory. |
 | **DHT** | Shares signed advertisements about available shards. Each node stores discovery records locally in SQLite. |
 | **Relay** | Helps admitted peers communicate when routers prevent direct connections. It does not run model layers. |
+| **Credits** | Workers earn credits for layers they run; clients spend them. The portal counts only work that both sides' signed receipts agree on. |
 | **OpenCode integration** | Connects a coding-assistant interface to the local chat API. Currently text-only; tools and automatic edits are disabled. |
 
 The allocator uses available memory, prepared shard files and measured probe latency to select workers. It does not yet download arbitrary models or create new shard boundaries automatically.
@@ -78,6 +79,7 @@ See [the detailed architecture](docs/architecture.md) for source files, request 
 - Memory-aware shard allocation, readiness checks and exclusive request reservations.
 - Classic HTML operator pages and a local inference UI with worker status and placement controls.
 - OpenCode connected to the local API without a hosted inference provider.
+- Contribution credits: signed receipts from worker and client, a zero-sum ledger in the portal, and an optional allowance that refuses new sessions to members who only consume.
 
 **Tested:** 23 isolated Docker checks, including real Qwen generation through the UI, forced relay connections, network delay, revoked members, disconnections and recovery into a new session. See [test results](docs/test-results/network-ui.md).
 
@@ -140,6 +142,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
 | [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
 | [Portal accounts](docs/portal-accounts.md) | Invite-only signup and sign-in |
+| [Credits](docs/credits.md) | How contribution is counted, matched and enforced |
 | [OpenCode](docs/opencode.md) | Local coding-assistant integration |
 
 The next milestone is a repeatable two-home-network test, followed by easier onboarding and measured improvements to performance and reliability.

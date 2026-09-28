@@ -1,5 +1,6 @@
 mod accounts;
 mod admin;
+mod credits;
 mod membership;
 use anyhow::{Context, Result, ensure};
 use axum::{
@@ -25,6 +26,9 @@ struct App {
     authority: Option<Arc<sangama_network_auth::libp2p_identity::Keypair>>,
     network: String,
     admin_token: Option<String>,
+    /// Layer-tokens a member may owe before reservations are refused; `None` records
+    /// credits without enforcing them.
+    credit_allowance: Option<i64>,
 }
 fn escape(value: &str) -> String {
     value
@@ -59,7 +63,9 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
     if request.headers().get("host").and_then(|h| h.to_str().ok()) != Some(app.host.as_str()) {
         return failure(StatusCode::BAD_REQUEST, "Unexpected host.");
     }
-    let machine_api = request.uri().path().starts_with("/v1/membership/");
+    let machine_api = ["/v1/membership/", "/v1/credits/"]
+        .iter()
+        .any(|prefix| request.uri().path().starts_with(prefix));
     if machine_api && request.headers().contains_key("origin") {
         return failure(
             StatusCode::FORBIDDEN,
@@ -209,6 +215,12 @@ async fn main() -> Result<()> {
     let mut config = tokio_postgres::Config::new();
     config
         .host(env::var("DATABASE_HOST").unwrap_or_else(|_| "postgres".into()))
+        .port(match env::var("DATABASE_PORT") {
+            Ok(port) => port
+                .parse()
+                .context("DATABASE_PORT must be a port number")?,
+            Err(_) => 5432,
+        })
         .user("sangama")
         .dbname("sangama")
         .password(password.trim())
@@ -275,6 +287,26 @@ async fn main() -> Result<()> {
         println!("Membership revoked");
         return Ok(());
     }
+    if action == "link-peer" {
+        let peer = env::args().nth(2).context("peer ID required")?;
+        let username = env::args().nth(3).context("username required")?;
+        ensure!(
+            credits::link(&client, &peer, &username).await?,
+            "account not found"
+        );
+        println!("Peer credits now count toward {username}");
+        return Ok(());
+    }
+    if action == "credits" {
+        let summary = credits::summary(&client).await?;
+        for (holder, balance) in summary.balances {
+            println!("{holder}\t{}", credits::format(balance));
+        }
+        for (consumer, count) in summary.unmatched {
+            println!("unmatched claims billed to {consumer}\t{count}");
+        }
+        return Ok(());
+    }
     let authority = env::var("MEMBERSHIP_KEY_FILE")
         .ok()
         .map(|p| -> Result<_> {
@@ -318,6 +350,22 @@ async fn main() -> Result<()> {
             })
             .transpose()?,
         network: env::var("NETWORK_ID").unwrap_or_else(|_| "sangama-private-v1".into()),
+        // Unset or empty records credits without enforcing them.
+        credit_allowance: env::var("CREDIT_ALLOWANCE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| -> Result<i64> {
+                let credits: i64 = v
+                    .trim()
+                    .parse()
+                    .context("CREDIT_ALLOWANCE must be whole credits")?;
+                ensure!(
+                    (0..=1_000_000_000).contains(&credits),
+                    "CREDIT_ALLOWANCE out of range"
+                );
+                Ok(credits * credits::UNITS_PER_CREDIT)
+            })
+            .transpose()?,
     };
     let router = Router::new()
         .route("/", get(index))
@@ -338,6 +386,11 @@ async fn main() -> Result<()> {
             axum::routing::post(membership::redeem),
         )
         .route("/v1/membership/snapshot", get(membership::snapshot))
+        .route(
+            "/v1/credits/receipts",
+            axum::routing::post(credits::receipt),
+        )
+        .route("/v1/credits/standing", get(credits::standing))
         .route(
             "/style.css",
             get(|| async {

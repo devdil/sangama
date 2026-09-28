@@ -1,0 +1,20 @@
+{
+  "test": "scripts/test-credits-local.py",
+  "date": "2026-09-28",
+  "platform": "macOS arm64, native processes, CPU Qwen2.5-0.5B, one shard serving all 24 layers",
+  "topology": "portal + throwaway PostgreSQL, relay, one worker, one client; forced relay on loopback",
+  "allowance_credits": 1,
+  "tokens_in_first_session": 49,
+  "checks": {
+    "all_roles_admitted": true,
+    "worker_reachable_through_relay": true,
+    "generation_before_allowance_is_used": true,
+    "both_sides_receipts_accepted_and_agree": true,
+    "worker_credited_client_debited_zero_sum": true,
+    "reservation_refused_past_allowance": true,
+    "linked_account_settles_and_restores_access": true,
+    "replay_ignored_and_forgery_refused": true,
+    "shutdown_sends_pending_receipts": true
+  },
+  "not_covered": "Two-worker routes are covered by the Docker simulation (mesh-acceptance.md), not by this native test."
+}

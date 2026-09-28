@@ -51,6 +51,7 @@ For independent numerical validation, run `qwen-test` with the same device and p
 | Generation, EOS or cleanup | `src/qwen/runner.rs`, `src/qwen/network.rs` | `tests/generation.rs`, real generation regression |
 | Frame format and bounds | `src/qwen/wire.rs` | Wire/network tests, all-node compatibility review |
 | Invitations and revocation | `crates/network-auth/src/lib.rs`, `portal/src/membership.rs` | Auth/portal tests, mesh simulation |
+| Contribution credits | `src/credits.rs`, `crates/network-auth/src/credits.rs`, `portal/src/credits.rs` | Unit tests, `scripts/test-credits-local.py` |
 | Relay and peer transport | `src/mesh.rs`, `src/mesh_transport.rs` | Transport tests, forced-relay simulation |
 | Signed discovery | `src/mesh_store.rs` | Signature/expiry/persistence tests, simulation |
 | Allocation and model loading | `src/mesh_allocate.rs`, `src/managed_worker.rs`, `src/resources.rs` | Placement tests, cold-start simulation |
