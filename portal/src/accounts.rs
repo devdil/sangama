@@ -196,6 +196,7 @@ pub async fn signin(State(app): State<App>, Form(form): Form<Signin>) -> Respons
     response
 }
 /// The signed-in username, if the request carries a live session.
+#[allow(clippy::result_large_err)]
 pub async fn member(app: &App, headers: &HeaderMap) -> Result<Option<String>, Response> {
     let Some(session) = token(app, headers) else {
         return Ok(None);
