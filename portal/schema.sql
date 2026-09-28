@@ -84,3 +84,11 @@ SELECT holder, sum(delta)::bigint AS balance FROM (
     SELECT coalesce('account:' || l.account_id, 'peer:' || e.consumer), -e.units
     FROM credit_entries e LEFT JOIN credit_links l ON l.peer_id = e.consumer
 ) t GROUP BY holder;
+
+-- Member-issued network invitations. Operator-issued rows have no inviter.
+ALTER TABLE network_invitations ADD COLUMN IF NOT EXISTS invited_by BIGINT REFERENCES accounts(id) ON DELETE SET NULL;
+ALTER TABLE network_invitations ADD COLUMN IF NOT EXISTS own_device BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE network_invitations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS network_invitations_inviter ON network_invitations(invited_by, created_at);
+ALTER TABLE network_members ADD COLUMN IF NOT EXISTS invited_by BIGINT REFERENCES accounts(id) ON DELETE SET NULL;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS can_invite BOOLEAN NOT NULL DEFAULT true;

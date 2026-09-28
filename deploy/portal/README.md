@@ -111,6 +111,13 @@ without enforcing. Link a person's peers to their account with
 `sangama-portal link-peer <peer-id> <username>` or the `/admin` form. See
 [credits](../../docs/credits.md).
 
+### Member invitations
+
+Signed-in members can issue worker and client network invitations from `/account`,
+up to `MEMBER_INVITES` per 30 days (default 3; `0` disables). Stop a misbehaving
+inviter and revoke its peers with `sangama-portal stop-inviter <username>`. See
+[member invitations](../../docs/admitted-mesh.md#member-invitations).
+
 ### Local provider credential
 
 Store the Linode API token as `LINODE_TOKEN` in the repository-root `.env` (mode 0600).

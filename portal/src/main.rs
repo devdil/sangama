@@ -1,6 +1,7 @@
 mod accounts;
 mod admin;
 mod credits;
+mod invites;
 mod membership;
 use anyhow::{Context, Result, ensure};
 use axum::{
@@ -29,6 +30,8 @@ struct App {
     /// Layer-tokens a member may owe before reservations are refused; `None` records
     /// credits without enforcing them.
     credit_allowance: Option<i64>,
+    /// Network invitations each account may issue per 30 days; 0 disables member invites.
+    member_invites: i64,
 }
 fn escape(value: &str) -> String {
     value
@@ -297,6 +300,29 @@ async fn main() -> Result<()> {
         println!("Peer credits now count toward {username}");
         return Ok(());
     }
+    if action == "stop-inviter" {
+        let username = env::args().nth(2).context("username required")?;
+        let revoked = invites::stop_inviter(&client, &username)
+            .await?
+            .context("account not found")?;
+        println!("{username} can no longer invite; revoked {revoked} invited peer(s)");
+        return Ok(());
+    }
+    if action == "resume-inviter" {
+        let username = env::args().nth(2).context("username required")?;
+        ensure!(
+            client
+                .execute(
+                    "UPDATE accounts SET can_invite=true WHERE username=$1",
+                    &[&username]
+                )
+                .await?
+                == 1,
+            "account not found"
+        );
+        println!("{username} may invite again; previously revoked peers stay revoked");
+        return Ok(());
+    }
     if action == "credits" {
         let summary = credits::summary(&client).await?;
         for (holder, balance) in summary.balances {
@@ -350,6 +376,17 @@ async fn main() -> Result<()> {
             })
             .transpose()?,
         network: env::var("NETWORK_ID").unwrap_or_else(|_| "sangama-private-v1".into()),
+        member_invites: match env::var("MEMBER_INVITES") {
+            Ok(v) if !v.trim().is_empty() => {
+                let quota: i64 = v
+                    .trim()
+                    .parse()
+                    .context("MEMBER_INVITES must be a whole number")?;
+                ensure!((0..=100).contains(&quota), "MEMBER_INVITES must be 0..=100");
+                quota
+            }
+            _ => invites::DEFAULT_QUOTA,
+        },
         // Unset or empty records credits without enforcing them.
         credit_allowance: env::var("CREDIT_ALLOWANCE")
             .ok()
@@ -372,6 +409,7 @@ async fn main() -> Result<()> {
         .route("/join", get(accounts::signup_form).post(accounts::signup))
         .route("/signin", get(accounts::signin_form).post(accounts::signin))
         .route("/account", get(accounts::account))
+        .route("/account/invite", axum::routing::post(invites::issue))
         .route("/signout", axum::routing::post(accounts::signout))
         .route("/about", get(about))
         .route("/connect", get(connect))

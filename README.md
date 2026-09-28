@@ -75,6 +75,7 @@ See [the detailed architecture](docs/architecture.md) for source files, request 
 - Real Qwen text generation using CPU or Apple Metal.
 - Workers that load only their assigned physical shard files.
 - Peer identity verification, single-use invitations, expiring membership and revocation.
+- Members can invite their own devices or other people within a quota; the operator can stop an inviter and revoke everyone it invited.
 - Encrypted libp2p connections, a controlled relay and signed DHT discovery.
 - Memory-aware shard allocation, readiness checks and exclusive request reservations.
 - Classic HTML operator pages and a local inference UI with worker status and placement controls.
