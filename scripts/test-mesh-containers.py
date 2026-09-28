@@ -54,7 +54,7 @@ def main():
         docker('rm',db);containers.remove(db)
         docker('run','-d','--name',db,'--network',nets['db'],'--network-alias','postgres','--tmpfs','/var/lib/postgresql/data:rw,size=512m','--mount',f'type=bind,src={private}/dbpass,dst=/run/dbpass,readonly','--mount',f'type=bind,src={init},dst=/docker-entrypoint-initdb.d/10-init.sql,readonly','-e','POSTGRES_PASSWORD_FILE=/run/dbpass','postgres:17-bookworm');containers.append(db)
         wait(lambda:docker('exec',db,'pg_isready','-U','postgres').returncode==0)
-        portal=create('portal',nets['db'],['--mount',f'type=bind,src={private}/dbpass,dst=/run/dbpass,readonly','--mount',f'type=bind,src={authority}/identity.key,dst=/run/authority.key,readonly','-e','DATABASE_PASSWORD_FILE=/run/dbpass','-e','DATABASE_HOST=postgres','-e','PUBLIC_ORIGIN=http://portal:8080','-e','SIMULATION_HTTP=1','-e','NETWORK_ID=simulation','-e','MEMBERSHIP_KEY_FILE=/run/authority.key',args.portal_image],entry='/usr/local/bin/sangama-portal')
+        portal=create('portal',nets['db'],['--mount',f'type=bind,src={private}/dbpass,dst=/run/dbpass,readonly','--mount',f'type=bind,src={authority}/identity.key,dst=/run/authority.key,readonly','-e','DATABASE_PASSWORD_FILE=/run/dbpass','-e','DATABASE_HOST=postgres','-e','PUBLIC_ORIGIN=http://portal:8080','-e','SIMULATION_HTTP=1','-e','NETWORK_ID=simulation','-e','MEMBERSHIP_KEY_FILE=/run/authority.key','-e','CREDIT_ALLOWANCE=1000000',args.portal_image],entry='/usr/local/bin/sangama-portal')
         for n in ['a','b','c']:docker('network','connect','--alias','portal',nets[n],portal)
         docker('start',portal)
         roles=['relay','worker0','worker1','client','outsider']
@@ -256,6 +256,22 @@ finally:
         docker('exec',names['client'],'sangama','--token-file','/state/token','mesh-allocate','--model-dir','/model','--candidates','127.0.0.1:7901,127.0.0.1:7902',timeout=120)
         wait(lambda:probe(7902),120)
         recovered=generate();assert recovered['distributed_token_ids']==baseline['distributed_token_ids'];checks['restart_recovers_new_session']=True
+        # Credits: each worker and the client sign what they saw once a session is idle;
+        # the portal counts a stage only where the client's route confirms it.
+        def psql(query):return docker('exec',db,'psql','-U','postgres','-d','sangama','-Atc',query).stdout.strip()
+        def confirmed():
+            return psql("SELECT session FROM credit_entries GROUP BY session HAVING count(DISTINCT worker)=2 LIMIT 1")
+        session=wait(confirmed,240)
+        entries=dict(line.split('|') for line in psql(f"SELECT worker,units FROM credit_entries WHERE session='{session}'").splitlines())
+        usage=json.loads(psql(f"SELECT stages FROM credit_receipts WHERE session='{session}' AND kind='usage'"))
+        tokens=int(psql(f"SELECT tokens FROM credit_receipts WHERE session='{session}' AND kind='usage'"))
+        assert usage==[{'peer':ids['worker0'],'start':0,'end':12},{'peer':ids['worker1'],'start':12,'end':24}],usage
+        assert entries=={ids['worker0']:str(tokens*12),ids['worker1']:str(tokens*12)},entries
+        balances=dict(line.split('|') for line in psql('SELECT holder,balance FROM credit_balances').splitlines())
+        assert int(balances['peer:'+ids['client']])<0 and all(int(balances['peer:'+ids[w]])>0 for w in ['worker0','worker1'])
+        assert sum(int(b) for b in balances.values())==0
+        report['credits']={'confirmed_session_tokens':tokens,'balances':{role:int(balances['peer:'+ids[role]]) for role in ['client','worker0','worker1']}}
+        checks['two_stage_credit_receipts_match_and_sum_to_zero']=True
         # Bound abuse by an already-admitted identity (not merely by its IP address).
         quota_code="import urllib.request,urllib.error; denied=0\nfor i in range(1250):\n r=urllib.request.Request('http://127.0.0.1:7902/v1/qwen/info',headers={'Authorization':'Bearer '+open('/state/token').read()})\n try: urllib.request.urlopen(r,timeout=5).read()\n except urllib.error.HTTPError as e:\n  if e.code==429: denied+=1;break\nprint(denied)"
         assert int(execpy(names['client'],quota_code).stdout.strip())==1;checks['admitted_peer_request_quota']=True

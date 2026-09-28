@@ -102,6 +102,15 @@ session is stored. See [the UI workflow](../../docs/network-ui.md) for credentia
 handling, limitations and local tests. Worker onboarding remains a local signed
 challenge; do not upload private peer keys to the portal.
 
+### Credits
+
+The portal records signed credit receipts from workers and clients. Set
+`CREDIT_ALLOWANCE` (whole credits) in the Compose environment to refuse new sessions
+to members whose balance falls below minus that amount; leave it unset to record
+without enforcing. Link a person's peers to their account with
+`sangama-portal link-peer <peer-id> <username>` or the `/admin` form. See
+[credits](../../docs/credits.md).
+
 ### Local provider credential
 
 Store the Linode API token as `LINODE_TOKEN` in the repository-root `.env` (mode 0600).

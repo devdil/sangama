@@ -9,15 +9,18 @@
     "worker_networks_cannot_dial_each_other": true,
     "placement_lease_ownership_and_inference_exclusion": true,
     "exclusive_session_reservations": true,
+    "worker_role_cannot_reserve_or_place": true,
     "automatic_ready_route_selection": true,
     "signed_dht_shard_discovery": true,
     "worker_dht_records_persist_in_sqlite": true,
     "real_qwen_matches_independent_baseline": true,
+    "protected_ui_allocation_telemetry_and_real_generation": true,
     "delay_jitter_bandwidth_preserve_tokens": true,
     "opencode_compatible_chat_api": true,
     "actual_opencode_cli_uses_relay_workers": true,
     "mid_generation_disconnect_fails_closed": true,
     "restart_recovers_new_session": true,
+    "two_stage_credit_receipts_match_and_sum_to_zero": true,
     "admitted_peer_request_quota": true,
     "oversized_frames_rejected": true,
     "revocation_blocks_established_peer": true,
@@ -30,10 +33,10 @@
       "candidate": {
         "address": "127.0.0.1:7901",
         "capacity": {
-          "peer": "12D3KooWN4LrdyF1LijrTJmsZ9z5DbYth2KAa1VsNhGFiyuwnBDL",
+          "peer": "12D3KooWSSbbx3tbwkXjyoh6x83dEXzA33AjNYLKJeDQYP15Vfp2",
           "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
           "device": "cpu",
-          "available_bytes": 3207319552,
+          "available_bytes": 3206656000,
           "budget_bytes": 2306867200,
           "shards": [
             {
@@ -44,7 +47,7 @@
           "loaded_shard": null,
           "busy": false
         },
-        "probe_ms": 1.872708
+        "probe_ms": 0.8327910000000001
       }
     },
     {
@@ -52,10 +55,10 @@
       "candidate": {
         "address": "127.0.0.1:7902",
         "capacity": {
-          "peer": "12D3KooWGMoquLJUQYzjYVN1pJ45iXHmNNjcLXVB4v8MUnQGD9JX",
+          "peer": "12D3KooWBcTWonXtdfB4Kyk4hw1ke4XxQ8jBZnPk3qJCeU4croP3",
           "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
           "device": "cpu",
-          "available_bytes": 3207323648,
+          "available_bytes": 3207598080,
           "budget_bytes": 2306867200,
           "shards": [
             {
@@ -66,7 +69,7 @@
           "loaded_shard": null,
           "busy": false
         },
-        "probe_ms": 4.847917
+        "probe_ms": 1.234667
       }
     }
   ],
@@ -78,7 +81,7 @@
         "manifest.json",
         "shard-0-of-2.safetensors"
       ],
-      "image_id": "sha256:604ae2e5f6fd289a130d91ca6dd335ec7589ce69a49e0c821e1cbc845e3f2435",
+      "image_id": "sha256:dd9e4d6b3b516fbfeaf0680a8e9916bdb867052a2fa2fcb17da04b6048fd0034",
       "read_only_root": true,
       "host_ports_published": false,
       "capabilities_dropped": [
@@ -92,7 +95,7 @@
         "manifest.json",
         "shard-1-of-2.safetensors"
       ],
-      "image_id": "sha256:604ae2e5f6fd289a130d91ca6dd335ec7589ce69a49e0c821e1cbc845e3f2435",
+      "image_id": "sha256:dd9e4d6b3b516fbfeaf0680a8e9916bdb867052a2fa2fcb17da04b6048fd0034",
       "read_only_root": true,
       "host_ports_published": false,
       "capabilities_dropped": [
@@ -106,7 +109,7 @@
         "manifest.json",
         "tokenizer.json"
       ],
-      "image_id": "sha256:604ae2e5f6fd289a130d91ca6dd335ec7589ce69a49e0c821e1cbc845e3f2435",
+      "image_id": "sha256:dd9e4d6b3b516fbfeaf0680a8e9916bdb867052a2fa2fcb17da04b6048fd0034",
       "read_only_root": true,
       "host_ports_published": false,
       "capabilities_dropped": [
@@ -116,7 +119,7 @@
     {
       "role": "relay",
       "model_files": [],
-      "image_id": "sha256:604ae2e5f6fd289a130d91ca6dd335ec7589ce69a49e0c821e1cbc845e3f2435",
+      "image_id": "sha256:dd9e4d6b3b516fbfeaf0680a8e9916bdb867052a2fa2fcb17da04b6048fd0034",
       "read_only_root": true,
       "host_ports_published": false,
       "capabilities_dropped": [
@@ -147,15 +150,15 @@
           },
           "device": "cpu",
           "precision": "f32",
-          "pid": 37,
+          "pid": 36,
           "busy": false,
           "memory": {
-            "available_before_load_bytes": 3205451776,
+            "available_before_load_bytes": 3204943872,
             "estimated_required_bytes": 1713354048,
-            "budget_bytes": 2564361420
+            "budget_bytes": 2563955096
           }
         },
-        "probe_ms": 1.868
+        "probe_ms": 1.305875
       },
       {
         "address": "127.0.0.1:7901",
@@ -176,21 +179,21 @@
           "pid": 37,
           "busy": false,
           "memory": {
-            "available_before_load_bytes": 3205226496,
+            "available_before_load_bytes": 3204567040,
             "estimated_required_bytes": 1713350048,
-            "budget_bytes": 2564181196
+            "budget_bytes": 2563653632
           }
         },
-        "probe_ms": 1.792
+        "probe_ms": 1.0785829999999998
       }
     ],
-    "estimated_route_probe_ms": 3.66,
+    "estimated_route_probe_ms": 2.3844579999999995,
     "reservation_required": true
   },
   "discovered_shards": [
     {
       "network": "simulation",
-      "peer": "12D3KooWN4LrdyF1LijrTJmsZ9z5DbYth2KAa1VsNhGFiyuwnBDL",
+      "peer": "12D3KooWSSbbx3tbwkXjyoh6x83dEXzA33AjNYLKJeDQYP15Vfp2",
       "info": {
         "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
         "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
@@ -208,121 +211,121 @@
         "pid": 37,
         "busy": false,
         "memory": {
-          "available_before_load_bytes": 3205226496,
+          "available_before_load_bytes": 3204567040,
           "estimated_required_bytes": 1713350048,
-          "budget_bytes": 2564181196
+          "budget_bytes": 2563653632
         }
       },
-      "issued": 1790492368,
-      "expires": 1790492428,
+      "issued": 1790585216,
+      "expires": 1790585276,
       "public_key": [
         8,
         1,
         18,
         32,
-        181,
-        224,
-        228,
-        8,
-        230,
-        179,
-        159,
-        78,
-        15,
-        80,
+        247,
+        3,
+        23,
+        41,
+        72,
+        129,
+        91,
+        63,
+        63,
+        231,
+        125,
         238,
-        154,
-        136,
-        226,
-        157,
-        160,
-        204,
-        96,
-        183,
+        82,
+        195,
         65,
-        253,
-        54,
-        161,
-        138,
-        173,
-        188,
         181,
-        139,
-        174,
-        27,
-        141,
-        155
+        119,
+        119,
+        3,
+        222,
+        52,
+        153,
+        75,
+        29,
+        81,
+        125,
+        89,
+        87,
+        254,
+        50,
+        200,
+        159
       ],
       "signature": [
-        5,
-        190,
-        61,
-        38,
-        50,
-        137,
-        20,
-        107,
-        114,
-        201,
-        9,
-        128,
-        201,
-        170,
-        242,
-        226,
-        156,
-        176,
-        95,
-        60,
-        156,
-        246,
-        154,
-        4,
-        0,
-        138,
-        68,
-        228,
-        145,
-        176,
-        96,
-        249,
-        121,
-        43,
-        108,
-        95,
-        255,
-        209,
-        253,
-        9,
-        158,
-        169,
-        205,
-        197,
-        178,
-        116,
-        231,
-        138,
-        207,
-        137,
-        63,
         204,
-        75,
-        197,
-        119,
-        145,
-        176,
-        99,
-        2,
+        194,
+        255,
+        147,
+        10,
         192,
-        249,
-        134,
+        75,
+        147,
+        109,
+        3,
+        206,
+        233,
+        240,
+        212,
+        169,
+        13,
+        231,
+        167,
+        49,
+        230,
         6,
-        1
+        161,
+        101,
+        225,
+        90,
+        118,
+        38,
+        74,
+        113,
+        84,
+        93,
+        21,
+        169,
+        219,
+        85,
+        57,
+        221,
+        215,
+        248,
+        229,
+        141,
+        85,
+        68,
+        209,
+        216,
+        57,
+        196,
+        92,
+        86,
+        206,
+        21,
+        201,
+        164,
+        125,
+        115,
+        84,
+        168,
+        56,
+        92,
+        76,
+        13,
+        190,
+        162,
+        4
       ]
     },
     {
       "network": "simulation",
-      "peer": "12D3KooWGMoquLJUQYzjYVN1pJ45iXHmNNjcLXVB4v8MUnQGD9JX",
+      "peer": "12D3KooWBcTWonXtdfB4Kyk4hw1ke4XxQ8jBZnPk3qJCeU4croP3",
       "info": {
         "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
         "model_hash": "45dabb5ce2dfef22f34cdf058973f348688108aaf30b6a814a77b75f99cf8186",
@@ -337,119 +340,119 @@
         },
         "device": "cpu",
         "precision": "f32",
-        "pid": 37,
+        "pid": 36,
         "busy": false,
         "memory": {
-          "available_before_load_bytes": 3205451776,
+          "available_before_load_bytes": 3204943872,
           "estimated_required_bytes": 1713354048,
-          "budget_bytes": 2564361420
+          "budget_bytes": 2563955096
         }
       },
-      "issued": 1790492369,
-      "expires": 1790492429,
+      "issued": 1790585217,
+      "expires": 1790585277,
       "public_key": [
         8,
         1,
         18,
         32,
-        97,
-        52,
-        40,
-        89,
-        255,
-        68,
-        93,
-        255,
-        111,
-        118,
+        26,
+        170,
+        114,
+        227,
+        195,
+        193,
+        128,
+        66,
+        85,
+        252,
+        144,
+        34,
+        246,
+        171,
+        175,
         115,
-        109,
-        65,
-        52,
-        117,
-        37,
-        64,
-        61,
-        244,
-        219,
-        174,
-        0,
-        148,
-        84,
-        123,
-        151,
-        207,
-        133,
-        134,
-        251,
-        71,
-        8
+        56,
+        21,
+        168,
+        108,
+        20,
+        150,
+        113,
+        103,
+        94,
+        248,
+        75,
+        255,
+        14,
+        144,
+        255,
+        110
       ],
       "signature": [
-        92,
-        234,
-        11,
-        226,
-        172,
-        252,
-        115,
-        53,
-        171,
-        189,
-        203,
-        241,
-        138,
-        11,
-        206,
-        84,
-        151,
-        146,
-        131,
-        206,
-        208,
-        27,
-        136,
+        68,
+        130,
+        139,
+        79,
+        40,
+        87,
+        31,
+        161,
+        58,
+        194,
+        137,
+        50,
+        110,
         1,
-        228,
-        94,
+        99,
+        58,
+        133,
+        110,
+        160,
+        87,
+        71,
+        214,
+        148,
+        28,
+        231,
+        104,
+        98,
+        132,
+        140,
+        25,
+        85,
+        173,
+        249,
+        35,
+        181,
+        77,
+        161,
         64,
-        81,
-        138,
-        25,
+        1,
+        125,
+        1,
+        173,
+        239,
+        160,
+        182,
+        83,
+        200,
+        0,
+        190,
+        200,
+        88,
+        84,
+        226,
+        11,
+        193,
+        161,
+        49,
+        206,
+        178,
+        65,
         229,
-        32,
-        66,
-        93,
-        142,
-        172,
-        78,
-        20,
-        67,
-        221,
-        34,
-        59,
-        242,
-        28,
-        66,
-        25,
-        208,
-        22,
-        174,
-        28,
-        201,
-        175,
-        246,
-        235,
-        240,
-        22,
-        203,
-        247,
-        32,
-        29,
-        232,
-        76,
-        126,
-        13
+        173,
+        147,
+        1
       ]
     }
   ],
@@ -496,9 +499,9 @@
     "passed": null,
     "local": null,
     "distributed": {
-      "first_token_ms": 2366.1317510000003,
-      "decode_tokens_per_second": 7.305962525524881,
-      "total_ms": 4966.747335000001
+      "first_token_ms": 629.001292,
+      "decode_tokens_per_second": 15.928797684147987,
+      "total_ms": 1821.8094609999998
     },
     "workers": [
       {
@@ -518,9 +521,9 @@
         "pid": 37,
         "busy": false,
         "memory": {
-          "available_before_load_bytes": 3205226496,
+          "available_before_load_bytes": 3204567040,
           "estimated_required_bytes": 1713350048,
-          "budget_bytes": 2564181196
+          "budget_bytes": 2563653632
         }
       },
       {
@@ -537,12 +540,12 @@
         },
         "device": "cpu",
         "precision": "f32",
-        "pid": 37,
+        "pid": 36,
         "busy": false,
         "memory": {
-          "available_before_load_bytes": 3205451776,
+          "available_before_load_bytes": 3204943872,
           "estimated_required_bytes": 1713354048,
-          "budget_bytes": 2564361420
+          "budget_bytes": 2563955096
         }
       }
     ],
@@ -551,13 +554,13 @@
         "shard": 0,
         "start": 0,
         "end": 12,
-        "forward_ms": 41.886792
+        "forward_ms": 22.028375
       },
       {
         "shard": 1,
         "start": 12,
         "end": 24,
-        "forward_ms": 72.764708
+        "forward_ms": 38.018916
       }
     ],
     "notes": [
@@ -567,6 +570,37 @@
       "Worker forward_ms includes host/device tensor transfers. Generation samples greedily on the final worker and returns a token; verification returns complete logits.",
       "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
       "One active session per worker, 4096-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover."
+    ]
+  },
+  "ui": {
+    "tokens": [
+      30888,
+      4686,
+      78597,
+      24231,
+      6147,
+      3847,
+      311,
+      4564,
+      323,
+      4332,
+      4963,
+      2041,
+      279,
+      1184,
+      369,
+      264,
+      8622,
+      3538,
+      13,
+      151645
+    ],
+    "checks": [
+      "UI authentication",
+      "cross-origin placement rejection",
+      "live relay and admission telemetry",
+      "UI allocation and route sorting",
+      "UI real generation"
     ]
   },
   "impaired_generation": {
@@ -612,9 +646,9 @@
     "passed": null,
     "local": null,
     "distributed": {
-      "first_token_ms": 839.773251,
-      "decode_tokens_per_second": 2.7298753652370475,
-      "total_ms": 7799.797961999999
+      "first_token_ms": 557.443251,
+      "decode_tokens_per_second": 3.7498558617082023,
+      "total_ms": 5624.304672
     },
     "workers": [
       {
@@ -634,9 +668,9 @@
         "pid": 37,
         "busy": false,
         "memory": {
-          "available_before_load_bytes": 3205226496,
+          "available_before_load_bytes": 3204567040,
           "estimated_required_bytes": 1713350048,
-          "budget_bytes": 2564181196
+          "budget_bytes": 2563653632
         }
       },
       {
@@ -653,12 +687,12 @@
         },
         "device": "cpu",
         "precision": "f32",
-        "pid": 37,
+        "pid": 36,
         "busy": false,
         "memory": {
-          "available_before_load_bytes": 3205451776,
+          "available_before_load_bytes": 3204943872,
           "estimated_required_bytes": 1713354048,
-          "budget_bytes": 2564361420
+          "budget_bytes": 2563955096
         }
       }
     ],
@@ -667,13 +701,13 @@
         "shard": 0,
         "start": 0,
         "end": 12,
-        "forward_ms": 68.273167
+        "forward_ms": 32.443084
       },
       {
         "shard": 1,
         "start": 12,
         "end": 24,
-        "forward_ms": 113.34625
+        "forward_ms": 43.593292
       }
     ],
     "notes": [
@@ -702,8 +736,8 @@
         }
       }
     ],
-    "created": 1790492392,
-    "id": "chatcmpl-91fc6cb5-831c-4b3a-afbb-8c5ead80b428",
+    "created": 1790585233,
+    "id": "chatcmpl-3d4aabc5-3f63-4b4a-a6af-ff1d80e67c2a",
     "model": "qwen2.5-0.5b-instruct",
     "object": "chat.completion",
     "usage": {
@@ -718,6 +752,14 @@
     "provider": "sangama",
     "tools_enabled": false,
     "cloud_fallback": false
+  },
+  "credits": {
+    "confirmed_session_tokens": 49,
+    "balances": {
+      "client": -6420,
+      "worker0": 5832,
+      "worker1": 588
+    }
   },
   "passed": true
 }

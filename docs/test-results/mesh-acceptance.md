@@ -1,6 +1,6 @@
 # Sangama admitted mesh — simulated acceptance results
 
-Tested locally on 27 September 2026. All 22 simulation checks passed.
+Tested locally on 28 September 2026. All 25 simulation checks passed.
 
 ## What ran
 
@@ -10,7 +10,8 @@ PostgreSQL stored membership and invitations. Signed DHT offers persisted in eac
 
 ## Validation
 
-- All 22 end-to-end checks passed: identity proof, single-use invitation, outsider rejection, cold placement, relay-only connectivity, placement/session exclusivity, signed discovery, exact baseline token match, OpenCode, quotas, oversized request rejection, mid-generation disconnect, restart/reallocation, revocation, and authority expiry.
+- All 25 end-to-end checks passed: identity proof, single-use invitation, outsider rejection, cold placement, relay-only connectivity, placement/session exclusivity, signed discovery, exact baseline token match, protected UI, OpenCode, contribution credits, quotas, oversized request rejection, mid-generation disconnect, restart/reallocation, revocation, and authority expiry.
+- Credits: for a two-worker session, both workers' and the client's signed receipts reached the portal. The client's route named worker 0 for layers 0–11 and worker 1 for layers 12–23, each worker was credited 12 layers × 49 tokens, and all balances summed to zero. Worker 1's receipts for sessions still inside the 90-second idle window were lost when the test stopped its container, so its balance is lower than worker 0's. Nodes now send pending receipts on Ctrl-C or SIGTERM; `docker stop` here still ends the node processes without that signal reaching them. Allowance refusal and account linking were checked separately with native processes ([credits-local.json](credits-local.json)).
 - All 29 root Rust unit/integration tests passed with Metal enabled. The shared authentication crate and portal tests also passed. Clippy passed; an optimized native Metal binary was built.
 - Unit tests additionally exercised forged, expired and wrong-network advertisements, unsafe transport addresses, and invalid placement choices.
 

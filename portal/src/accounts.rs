@@ -215,7 +215,14 @@ pub async fn members_only(app: &App, headers: &HeaderMap, title: &str, body: &st
 }
 pub async fn account(State(app): State<App>, headers: HeaderMap) -> Response {
     match member(&app, &headers).await {
-        Ok(Some(name)) => member_page("Your account", &format!("<h1>Welcome, {}.</h1><p>You are signed in.</p><p><a class=\"button\" href=\"/\">Network directory</a> <a class=\"button\" href=\"/connect\">Connect a worker</a></p><p>Your account does not automatically admit a worker to the network.</p><form action=\"/signout\" method=\"post\"><button type=\"submit\">Sign out</button></form>",escape(&name))).into_response(),
+        Ok(Some(name)) => {
+            let credit = match super::credits::account(&app.db, &name).await {
+                Ok((_, 0)) => "<h2>Credits</h2><p>No peers are linked to this account yet. Ask the operator to link your worker and client peer IDs so their credits count here.</p>".to_string(),
+                Ok((balance, peers)) => format!("<h2>Credits</h2><p class=\"count\">{} credits</p><p>From {peers} linked peer{}. Your workers earn credits when clients confirm the work; your clients spend them. One credit is 1,000 tokens through one model layer.</p>", super::credits::format(balance), if peers == 1 { "" } else { "s" }),
+                Err(_) => "<h2>Credits</h2><p>The credit ledger is temporarily unavailable.</p>".to_string(),
+            };
+            member_page("Your account", &format!("<h1>Welcome, {}.</h1><p>You are signed in.</p>{credit}<p><a class=\"button\" href=\"/\">Network directory</a> <a class=\"button\" href=\"/connect\">Connect a worker</a></p><p>Your account does not automatically admit a worker to the network.</p><form action=\"/signout\" method=\"post\"><button type=\"submit\">Sign out</button></form>",escape(&name))).into_response()
+        }
         Ok(None) => Redirect::to("/signin").into_response(),
         Err(response) => response,
     }

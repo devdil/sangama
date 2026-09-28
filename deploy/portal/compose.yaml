@@ -35,6 +35,7 @@ services:
       MEMBERSHIP_KEY_FILE: /run/secrets/membership_key
       ADMIN_TOKEN_FILE: /run/secrets/admin_token
       NETWORK_ID: ${NETWORK_ID:-sangama-private-v1}
+      CREDIT_ALLOWANCE: ${CREDIT_ALLOWANCE:-}
     secrets: [app_password, membership_key, admin_token]
     networks: [database, application]
     read_only: true

@@ -71,6 +71,8 @@ The standalone command returns its completed report; the chat API supports strea
 | KV cache | Worker memory; session-specific state, not replicated |
 | Local bearer token | One node's loopback bridge/worker; never sent across the mesh |
 | Chat API token | Separate local gateway credential |
+| Credit receipts and links | Portal PostgreSQL; signed per-session work/usage claims and peer-to-account links. See [credits](credits.md) |
+| Session meter | Node memory; tokens per session until signed and sent to the portal |
 
 Noise protects peer streams end to end, including through a relay. Quotas bound connections, circuits, frames, requests, bytes and advertisement writes. Membership snapshots expire quickly and are rechecked; a public snapshot exposes admitted peer IDs, roles and expiry, not private keys or invitations. Exact limits and setup are in [the mesh guide](admitted-mesh.md).
 
@@ -90,6 +92,8 @@ These controls do not prove remote computation correct, conceal activations from
 | `src/mesh_store.rs` | Signed admitted offers and persistent bounded record store |
 | `src/managed_worker.rs` | Capacity reporting, placement leases and child worker lifecycle |
 | `src/mesh_allocate.rs`, `mesh_plan.rs` | Cold assignment/loading and ready-route selection |
+| `src/credits.rs`, `crates/network-auth/src/credits.rs` | Session metering, signed receipts and the authority-signed credit standing |
+| `portal/src/credits.rs` | Receipt intake, ledger balances and standing |
 | `src/resources.rs` | Available-memory measurement and load estimates |
 | `crates/network-auth/src/lib.rs` | Shared ownership proofs and signed membership validation |
 | `portal/src/membership.rs`, `portal/schema.sql` | Authority endpoints and membership persistence |

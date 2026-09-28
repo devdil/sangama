@@ -6,7 +6,7 @@ static ATTEMPTS: std::sync::Mutex<Vec<std::time::Instant>> = std::sync::Mutex::n
 pub async fn form() -> Html<String> {
     page(
         "Network administration",
-        r#"<h1>Network administration</h1><p>Operator access only. Enter the separate portal admin credential for each action. It is never a worker token or peer private key. Actions require HTTPS outside localhost tests.</p><form action="/admin" method="post"><label for="admin_token">Admin credential</label><input id="admin_token" type="password" name="admin_token" maxlength="64" required autocomplete="off"><label for="action">Action</label><select id="action" name="action"><option value="inspect">View memberships</option><option value="invite">Issue network invitation</option><option value="directory">Issue signup invitation</option><option value="revoke">Revoke member</option></select><label for="role">Invitation role</label><select id="role" name="role"><option>worker</option><option>client</option><option>relay</option></select><label for="peer">Peer ID to revoke</label><input id="peer" name="peer" maxlength="128" autocomplete="off"><label><input type="checkbox" name="confirm" value="yes"> Confirm revocation of this peer (required only for revocation)</label><p><button type="submit">Submit operator action</button></p></form><p>Invitation codes are shown once. Copy them privately; refreshing an invitation result may issue another invitation. Membership does not prove online status.</p>"#,
+        r#"<h1>Network administration</h1><p>Operator access only. Enter the separate portal admin credential for each action. It is never a worker token or peer private key. Actions require HTTPS outside localhost tests.</p><form action="/admin" method="post"><label for="admin_token">Admin credential</label><input id="admin_token" type="password" name="admin_token" maxlength="64" required autocomplete="off"><label for="action">Action</label><select id="action" name="action"><option value="inspect">View memberships</option><option value="invite">Issue network invitation</option><option value="directory">Issue signup invitation</option><option value="revoke">Revoke member</option><option value="credits">View credit ledger</option><option value="link">Link peer to account</option></select><label for="role">Invitation role</label><select id="role" name="role"><option>worker</option><option>client</option><option>relay</option></select><label for="peer">Peer ID to revoke or link</label><input id="peer" name="peer" maxlength="128" autocomplete="off"><label for="username">Account username to link the peer to</label><input id="username" name="username" maxlength="32" autocomplete="off"><label><input type="checkbox" name="confirm" value="yes"> Confirm revocation of this peer (required only for revocation)</label><p><button type="submit">Submit operator action</button></p></form><p>Invitation codes are shown once. Copy them privately; refreshing an invitation result may issue another invitation. Membership does not prove online status.</p>"#,
     )
 }
 #[derive(Deserialize)]
@@ -16,6 +16,8 @@ pub struct Action {
     action: String,
     role: String,
     peer: String,
+    #[serde(default)]
+    username: String,
     confirm: Option<String>,
 }
 fn authorized(expected: Option<&str>, supplied: &str) -> bool {
@@ -99,6 +101,45 @@ pub async fn submit(State(app): State<App>, Form(input): Form<Action>) -> Respon
             Ok(_) => failure(StatusCode::NOT_FOUND,"Member not found."),
             Err(_) => failure(StatusCode::SERVICE_UNAVAILABLE,"Could not revoke member."),
         };
+    }
+    if input.action == "link" {
+        return match credits::link(&app.db, &input.peer, input.username.trim()).await {
+            Ok(true) => page("Peer linked", "<h1>Peer linked</h1><p>This peer's earned and spent credits now count toward the account. Earlier sessions are included.</p><a href=\"/admin\">Return to administration</a>").into_response(),
+            Ok(false) => failure(StatusCode::NOT_FOUND, "Account not found."),
+            Err(_) => failure(StatusCode::BAD_REQUEST, "Enter a valid peer ID and account username."),
+        };
+    }
+    if input.action == "credits" {
+        let Ok(summary) = credits::summary(&app.db).await else {
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Credit ledger unavailable.",
+            );
+        };
+        let mut body = String::from(
+            "<h1>Credit ledger</h1><p>One credit is 1,000 tokens through one model layer. A worker earns credits only when the client's own receipt confirms the session; the client pays the same amount, so balances sum to zero.</p><div class=\"table-wrap\"><table><tr><th>Holder</th><th>Credits</th></tr>",
+        );
+        if summary.balances.is_empty() {
+            body.push_str(
+                "<tr><td colspan=\"2\" class=\"empty\">No confirmed sessions yet.</td></tr>",
+            );
+        }
+        for (holder, balance) in summary.balances {
+            body.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td></tr>",
+                escape(&holder),
+                credits::format(balance)
+            ));
+        }
+        body.push_str("</table></div><h2>Unconfirmed work</h2><p>Worker claims older than an hour with no matching client receipt, by the client they name. A persistent count may mean a client withholds receipts or a worker overclaims.</p><div class=\"table-wrap\"><table><tr><th>Client peer</th><th>Claims</th></tr>");
+        for (consumer, count) in summary.unmatched {
+            body.push_str(&format!(
+                "<tr><td>{}</td><td>{count}</td></tr>",
+                escape(&consumer)
+            ));
+        }
+        body.push_str("</table></div><p><a href=\"/admin\">Return to administration</a></p>");
+        return page("Credit ledger", &body).into_response();
     }
     if input.action != "inspect" {
         return failure(StatusCode::BAD_REQUEST, "Unknown action.");
