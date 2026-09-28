@@ -33,7 +33,12 @@ pub async fn redeem(State(app): State<App>, Json(input): Json<Join>) -> Response
         return denied();
     };
     // A single statement atomically consumes both nonce and invitation, and creates membership.
-    let result = app.db.query("WITH claimed AS (UPDATE network_invitations SET used_at=now(),nonce=NULL WHERE token_hash=$1 AND nonce=$2 AND nonce_expires>now() AND expires_at>now() AND used_at IS NULL RETURNING role) INSERT INTO network_members (peer_id,role) SELECT $3,role FROM claimed ON CONFLICT (peer_id) DO UPDATE SET role=EXCLUDED.role,expires_at=now()+interval '24 hours',revoked=false RETURNING peer_id", &[&hash(&input.invitation), &input.nonce, &peer]).await;
+    // It records the inviting account; a member's invitation cannot restore a revoked peer, and
+    // one for the member's own device joins that account's credit balance.
+    let result = app.db.query("WITH claimed AS (UPDATE network_invitations SET used_at=now(),nonce=NULL WHERE token_hash=$1 AND nonce=$2 AND nonce_expires>now() AND expires_at>now() AND used_at IS NULL RETURNING role,invited_by,own_device), \
+        member AS (INSERT INTO network_members (peer_id,role,invited_by) SELECT $3,role,invited_by FROM claimed ON CONFLICT (peer_id) DO UPDATE SET role=EXCLUDED.role,expires_at=now()+interval '24 hours',revoked=false,invited_by=EXCLUDED.invited_by WHERE EXCLUDED.invited_by IS NULL OR NOT network_members.revoked RETURNING peer_id), \
+        linked AS (INSERT INTO credit_links (peer_id,account_id) SELECT m.peer_id,c.invited_by FROM member m, claimed c WHERE c.own_device AND c.invited_by IS NOT NULL ON CONFLICT (peer_id) DO UPDATE SET account_id=EXCLUDED.account_id) \
+        SELECT peer_id FROM member", &[&hash(&input.invitation), &input.nonce, &peer]).await;
     match result {
         Ok(rows) if rows.len() == 1 => {
             Json(serde_json::json!({"peer":peer,"network":app.network})).into_response()

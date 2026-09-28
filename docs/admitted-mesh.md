@@ -53,6 +53,33 @@ docker compose exec portal sangama-portal revoke PEER_ID
 Invite output is a secret: deliver it privately and store it in a 0600 file. It
 must not appear in command arguments, Git, browser URLs, or test reports.
 
+### Member invitations
+
+Signed-in members can also invite peers from their `/account` page, without asking
+the operator each time:
+
+- **Roles and quota.** Only `worker` and `client` roles. Each account may issue
+  `MEMBER_INVITES` invitations per 30 days, counted whether or not they are
+  redeemed. The default is 3; `0` turns member invitations off.
+- **Who it is for.** The member chooses when issuing:
+  - *My own device*: the peer is linked to the member's account, so its credits
+    count toward the member's balance (see [credits](credits.md)).
+  - *Someone else*: the peer keeps its own balance.
+- **Accountability.** The portal records the inviting account on the membership.
+  `/admin` → View memberships shows it.
+- **Stopping an inviter.** `sangama-portal stop-inviter USERNAME` (or the matching
+  `/admin` action) does three things: the account can no longer invite, its unused
+  invitations are cancelled, and every peer it invited is revoked.
+  `sangama-portal resume-inviter USERNAME` restores inviting only; revoked peers
+  stay revoked.
+- **No readmission by members.** A member's invitation cannot readmit a revoked
+  peer; the redeemed code is used up and the join is refused. Only an operator
+  invitation can readmit one.
+
+Each member-invited identity gets its own credit allowance, so the quota also
+bounds how many new allowances one member can create. Only one level is tracked:
+stopping an inviter does not revoke peers that its invitees later invited.
+
 ## A node configuration
 
 Build on a Mac with `./scripts/cargo build --release --features metal`. Linux CPU

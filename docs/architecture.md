@@ -94,6 +94,7 @@ These controls do not prove remote computation correct, conceal activations from
 | `src/mesh_allocate.rs`, `mesh_plan.rs` | Cold assignment/loading and ready-route selection |
 | `src/credits.rs`, `crates/network-auth/src/credits.rs` | Session metering, signed receipts and the authority-signed credit standing |
 | `portal/src/credits.rs` | Receipt intake, ledger balances and standing |
+| `portal/src/invites.rs` | Member-issued invitations, quotas and stopping an inviter |
 | `src/resources.rs` | Available-memory measurement and load estimates |
 | `crates/network-auth/src/lib.rs` | Shared ownership proofs and signed membership validation |
 | `portal/src/membership.rs`, `portal/schema.sql` | Authority endpoints and membership persistence |

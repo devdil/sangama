@@ -6,7 +6,7 @@ static ATTEMPTS: std::sync::Mutex<Vec<std::time::Instant>> = std::sync::Mutex::n
 pub async fn form() -> Html<String> {
     page(
         "Network administration",
-        r#"<h1>Network administration</h1><p>Operator access only. Enter the separate portal admin credential for each action. It is never a worker token or peer private key. Actions require HTTPS outside localhost tests.</p><form action="/admin" method="post"><label for="admin_token">Admin credential</label><input id="admin_token" type="password" name="admin_token" maxlength="64" required autocomplete="off"><label for="action">Action</label><select id="action" name="action"><option value="inspect">View memberships</option><option value="invite">Issue network invitation</option><option value="directory">Issue signup invitation</option><option value="revoke">Revoke member</option><option value="credits">View credit ledger</option><option value="link">Link peer to account</option></select><label for="role">Invitation role</label><select id="role" name="role"><option>worker</option><option>client</option><option>relay</option></select><label for="peer">Peer ID to revoke or link</label><input id="peer" name="peer" maxlength="128" autocomplete="off"><label for="username">Account username to link the peer to</label><input id="username" name="username" maxlength="32" autocomplete="off"><label><input type="checkbox" name="confirm" value="yes"> Confirm revocation of this peer (required only for revocation)</label><p><button type="submit">Submit operator action</button></p></form><p>Invitation codes are shown once. Copy them privately; refreshing an invitation result may issue another invitation. Membership does not prove online status.</p>"#,
+        r#"<h1>Network administration</h1><p>Operator access only. Enter the separate portal admin credential for each action. It is never a worker token or peer private key. Actions require HTTPS outside localhost tests.</p><form action="/admin" method="post"><label for="admin_token">Admin credential</label><input id="admin_token" type="password" name="admin_token" maxlength="64" required autocomplete="off"><label for="action">Action</label><select id="action" name="action"><option value="inspect">View memberships</option><option value="invite">Issue network invitation</option><option value="directory">Issue signup invitation</option><option value="revoke">Revoke member</option><option value="credits">View credit ledger</option><option value="link">Link peer to account</option><option value="stop-inviter">Stop an account inviting and revoke its peers</option></select><label for="role">Invitation role</label><select id="role" name="role"><option>worker</option><option>client</option><option>relay</option></select><label for="peer">Peer ID to revoke or link</label><input id="peer" name="peer" maxlength="128" autocomplete="off"><label for="username">Account username (to link a peer, or to stop an inviter)</label><input id="username" name="username" maxlength="32" autocomplete="off"><label><input type="checkbox" name="confirm" value="yes"> Confirm revocation (required to revoke a peer or stop an inviter)</label><p><button type="submit">Submit operator action</button></p></form><p>Invitation codes are shown once. Copy them privately; refreshing an invitation result may issue another invitation. Membership does not prove online status.</p>"#,
     )
 }
 #[derive(Deserialize)]
@@ -109,6 +109,19 @@ pub async fn submit(State(app): State<App>, Form(input): Form<Action>) -> Respon
             Err(_) => failure(StatusCode::BAD_REQUEST, "Enter a valid peer ID and account username."),
         };
     }
+    if input.action == "stop-inviter" {
+        if input.confirm.as_deref() != Some("yes") {
+            return failure(
+                StatusCode::BAD_REQUEST,
+                "Confirm this action; it revokes every peer the account invited.",
+            );
+        }
+        return match invites::stop_inviter(&app.db, input.username.trim()).await {
+            Ok(Some(revoked)) => page("Inviter stopped", &format!("<h1>Inviter stopped</h1><p>The account can no longer issue invitations, its unused invitations were cancelled, and {revoked} invited peer(s) were revoked. Workers enforce revocation as signed snapshots refresh. Re-enable invitations with <code>sangama-portal resume-inviter</code>.</p><a href=\"/admin\">Return to administration</a>")).into_response(),
+            Ok(None) => failure(StatusCode::NOT_FOUND, "Account not found."),
+            Err(_) => failure(StatusCode::SERVICE_UNAVAILABLE, "Could not stop the inviter."),
+        };
+    }
     if input.action == "credits" {
         let Ok(summary) = credits::summary(&app.db).await else {
             return failure(
@@ -144,17 +157,18 @@ pub async fn submit(State(app): State<App>, Form(input): Form<Action>) -> Respon
     if input.action != "inspect" {
         return failure(StatusCode::BAD_REQUEST, "Unknown action.");
     }
-    let Ok(rows) = app.db.query("SELECT peer_id,role,expires_at::text,CASE WHEN revoked THEN 'Revoked' WHEN expires_at<=now() THEN 'Expired' ELSE 'Admitted' END FROM network_members ORDER BY expires_at DESC LIMIT 100", &[]).await else { return failure(StatusCode::SERVICE_UNAVAILABLE,"Membership unavailable."); };
+    let Ok(rows) = app.db.query("SELECT m.peer_id,m.role,m.expires_at::text,CASE WHEN m.revoked THEN 'Revoked' WHEN m.expires_at<=now() THEN 'Expired' ELSE 'Admitted' END,coalesce(a.username,'operator') FROM network_members m LEFT JOIN accounts a ON a.id=m.invited_by ORDER BY m.expires_at DESC LIMIT 100", &[]).await else { return failure(StatusCode::SERVICE_UNAVAILABLE,"Membership unavailable."); };
     let mut body = String::from(
-        "<h1>Memberships</h1><p>Latest 100 memberships. Availability, model readiness and connection path are checked locally, not inferred from this list.</p><div class=\"table-wrap\"><table><tr><th>Peer</th><th>Role</th><th>Expires (server time)</th><th>Admission</th></tr>",
+        "<h1>Memberships</h1><p>Latest 100 memberships. Availability, model readiness and connection path are checked locally, not inferred from this list.</p><div class=\"table-wrap\"><table><tr><th>Peer</th><th>Role</th><th>Expires (server time)</th><th>Admission</th><th>Invited by</th></tr>",
     );
     for row in rows {
         body.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             escape(row.get(0)),
             escape(row.get(1)),
             escape(row.get(2)),
-            escape(row.get(3))
+            escape(row.get(3)),
+            escape(row.get(4))
         ));
     }
     body.push_str("</table></div><p><a href=\"/admin\">Return to administration</a></p>");
