@@ -101,7 +101,7 @@ pub struct Report {
     pub model_id: String,
     pub revision: String,
     pub manifest_hash: String,
-    pub precision: &'static str,
+    pub precision: String,
     pub device: String,
     pub topology: String,
     pub prompt: String,
@@ -460,6 +460,16 @@ async fn execute_chat(
             infos[0].precision,
             info.precision
         );
+        // Candle shards are pinned by the manifest; GGUF files must be the same file.
+        if let Some(sha) = &info.weights_sha256 {
+            ensure!(
+                infos
+                    .iter()
+                    .filter_map(|other: &Info| other.weights_sha256.as_ref())
+                    .all(|other| other == sha),
+                "route mixes different GGUF files; use one published GGUF"
+            );
+        }
         infos.push(info);
     }
     let route: Vec<_> = addresses
@@ -573,7 +583,10 @@ async fn execute_chat(
         model_id: manifest.model_id,
         revision: manifest.revision,
         manifest_hash: model_hash,
-        precision: "BF16 checkpoint converted to F32; not quantized",
+        precision: match infos.first().map(|info| info.precision.as_str()) {
+            Some("f32") | None => "BF16 checkpoint converted to F32; not quantized".into(),
+            Some(other) => format!("{other} GGUF weights (quantized or reduced precision)"),
+        },
         device: options.device,
         topology: if processes.is_some() {
             "separate worker processes over loopback on one physical computer".into()

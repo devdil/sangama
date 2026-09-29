@@ -215,6 +215,7 @@ mod tests {
                 },
                 device: "cpu".into(),
                 engine: "candle".into(),
+                weights_sha256: None,
                 precision: "f32".into(),
                 pid: 1,
                 busy: false,

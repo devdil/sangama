@@ -1,0 +1,308 @@
+[
+ {
+  "id": "A6",
+  "name": "Candle CUDA, GPU 0 + GPU 1",
+  "expect": "f32",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "A7",
+  "name": "llama.cpp CUDA F32, GPU 0 + GPU 1",
+  "expect": "f32",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "A8",
+  "name": "llama.cpp CUDA Q4_K_M, GPU 0 + GPU 1",
+  "expect": "q4",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "A8b",
+  "name": "llama.cpp CUDA Q4_K_M using the Mac-made GGUF, GPU 0 + GPU 1",
+  "expect": "q4",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m-mac.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m-mac.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "A9",
+  "name": "llama.cpp Vulkan F32 on NVIDIA, GPU 0 + GPU 1",
+  "expect": "f32",
+  "workers": [
+   {
+    "binary": "/root/sangama-vulkan",
+    "args": [
+     "--device",
+     "vulkan",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "GGML_VK_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "binary": "/root/sangama-vulkan",
+    "args": [
+     "--device",
+     "vulkan",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "GGML_VK_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "B4",
+  "name": "Candle CUDA GPU 0 -> llama.cpp CUDA GPU 1",
+  "expect": "f32",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "B5",
+  "name": "llama.cpp CUDA GPU 0 -> Candle CPU",
+  "expect": "f32",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cpu"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "B7",
+  "name": "Vulkan GPU 0 -> CUDA GPU 1 (two llama.cpp builds)",
+  "expect": "f32",
+  "workers": [
+   {
+    "binary": "/root/sangama-vulkan",
+    "args": [
+     "--device",
+     "vulkan",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-f32.gguf"
+    ],
+    "env": {
+     "GGML_VK_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "B8",
+  "name": "llama.cpp CUDA Q4_K_M + Candle CUDA F32",
+  "expect": "refuse",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ },
+ {
+  "id": "B9",
+  "name": "Box-made Q4_K_M + Mac-made Q4_K_M in one route",
+  "expect": "refuse",
+  "workers": [
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "0"
+    }
+   },
+   {
+    "args": [
+     "--device",
+     "cuda",
+     "--engine",
+     "llamacpp",
+     "--gguf",
+     "qwen2.5-0.5b-instruct-q4_k_m-mac.gguf"
+    ],
+    "env": {
+     "CUDA_VISIBLE_DEVICES": "1"
+    }
+   }
+  ]
+ }
+]

@@ -8,11 +8,14 @@ Each worker loads layers `[start, end)` of its manifest shard from a GGUF file. 
 
 A worker only loads a GGUF that `gguf.json` in the model directory approves: the file name, its SHA-256, its weight precision, and the manifest hash it was converted from. This keeps the pinned-model guarantee: a route cannot silently run a different model.
 
-A route may mix engines and devices, but every worker must use the same weight precision. A route with Q4_K_M and F32 workers is refused, because it would change the model's output without saying so.
+A route may mix engines and devices, but every worker must use the same weight precision, and every llama.cpp worker the same GGUF file (checked by SHA-256). Quantizing is not reproducible across machines, and the same quantized file can give different tokens on different GPU backends, so a Q4 route is only reproducible with one published file on one backend. F32 is exact across every engine and backend tested.
 
 ## Build
 
-Needs CMake, a C/C++ compiler, and the toolkit of the chosen GPU backend.
+Needs CMake, a C/C++ compiler, and the toolkit of the chosen GPU backend:
+
+- **CUDA:** a CUDA toolkit no newer than the driver's CUDA version (`nvidia-smi`). A newer toolkit builds, but Candle's CUDA kernels then fail to load (`CUDA_ERROR_UNSUPPORTED_PTX_VERSION`). NCCL is not used.
+- **Vulkan (Ubuntu):** `libvulkan-dev`, `glslc` and `spirv-headers`, plus a Vulkan driver for the GPU.
 
 ```sh
 ./scripts/fetch-llama-cpp.sh          # pinned source, checksum-verified and patched, in .tools/llama.cpp
@@ -33,7 +36,7 @@ python3 -m venv .tools/convert-venv
 .tools/convert-venv/bin/python scripts/prepare-gguf.py --quantize Q4_K_M
 ```
 
-This writes `qwen2.5-0.5b-instruct-f32.gguf` (the same values Candle uses) and, with `--quantize`, `qwen2.5-0.5b-instruct-q4_k_m.gguf` (5× smaller), and approves both in `gguf.json`.
+This writes `qwen2.5-0.5b-instruct-f32.gguf` (the same values Candle uses) and, with `--quantize`, `qwen2.5-0.5b-instruct-q4_k_m.gguf` (5× smaller), and approves both in `gguf.json`. The F32 conversion is byte-identical on every machine tested. Quantizing is not: for a multi-machine Q4 route, quantize once and copy the same file to every worker. Publishing the GGUFs with their hashes in the pinned manifest is the intended replacement for converting on each peer.
 
 ## Run workers
 
@@ -46,7 +49,9 @@ This writes `qwen2.5-0.5b-instruct-f32.gguf` (the same values Candle uses) and, 
 
 `--device` is `cpu` or the backend llama.cpp was built for: `metal`, `cuda`, `vulkan` or `rocm`. A worker refuses a device its build lacks. The generation report lists each worker's engine, device and precision.
 
-## Verified (Apple M5 Pro, macOS 26.3, 2026-09-29)
+## Verified
+
+Full results, including NVIDIA CUDA and Vulkan on Linux and routes between the Mac and a US datacenter, are in [the 2026-09-29 test run](test-results/gpu-matrix-2026-09-29.md). The first checks, on an Apple M5 Pro with macOS 26.3:
 
 | Route (shard 0 + shard 1) | 20-token greedy output |
 |---|---|
@@ -61,7 +66,7 @@ Workers also refuse a GGUF missing from `gguf.json`, a hash mismatch, a `gguf.js
 
 ## Not done yet
 
-- **CUDA, Vulkan and ROCm builds are untested.** Only Metal and CPU have run. The ROCm device-name check assumes llama.cpp names HIP devices `ROCm0`.
+- **ROCm, Windows, Intel and Qualcomm are untested.** CUDA and Vulkan ran on NVIDIA under Linux. The ROCm device-name check assumes llama.cpp names HIP devices `ROCm0`.
 - **Memory budget.** A worker budgets for the whole GGUF, and each stage allocates KV cache for every layer. Per-worker GGUF slices would fix both.
 - **Managed workers and the admitted mesh** still run Candle and F32 only.
 - **Maintaining the patch.** Track upstream llama.cpp for a layer-range API and rebase until one lands.
