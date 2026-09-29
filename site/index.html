@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sangama</title>
+<meta name="description" content="Sangama is an open-source Rust network that splits a language model's layers across the computers people already own: Macs, GPUs and CPUs.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+</style>
+</head>
+<body>
+
+<h1>Sangama</h1>
+<p><i>Sangama (संगम) means confluence: computers coming together to run one AI model.</i></p>
+
+<p>
+<a href="#how">How it works</a> |
+<a href="#architecture">Architecture</a> |
+<a href="#results">Results</a> |
+<a href="#hardware">Hardware</a> |
+<a href="#roadmap">Roadmap</a> |
+<a href="#contact">Contact</a> |
+<a href="https://github.com/devdil/sangama">Source code</a>
+</p>
+
+<hr>
+
+<p>Sangama is an open-source program, written in Rust, that splits a language model's layers across several computers: Macs, GPUs and ordinary CPUs. A model too large for any one device can then run across several, with encrypted, invitation-only connections between them.</p>
+
+<p><b>Status:</b> experimental. It runs on an invite-only network of trusted computers, and is tested with a small model (Qwen2.5-0.5B-Instruct). It is released under the MIT License.</p>
+
+<hr>
+
+<h2 id="how">How it works</h2>
+
+<p>A language model predicts each next piece of text (a <i>token</i>) by passing numbers through a stack of layers. Sangama gives each computer a contiguous slice of those layers.</p>
+
+<pre>
+  +----------+   tokens    +-------------------+  activations  +-------------------+
+  |  Client  | ----------> |     Worker A      | ------------> |     Worker B      |
+  |          |             |  layers 0 - 11    |               |  layers 12 - 23   |
+  |          |             |  (e.g. a Mac)     |               |  (e.g. a GPU)     |
+  +----------+             +-------------------+               +-------------------+
+       ^                                                                 |
+       |                     next token, then repeat                     |
+       +-----------------------------------------------------------------+
+</pre>
+
+<ol>
+<li><b>Contribute.</b> Each worker loads only the slice of the model it serves, sized to the memory it offers.</li>
+<li><b>Route.</b> A client checks that its workers cover every layer in order, reserves them, and sends the prompt through the chain.</li>
+<li><b>Generate.</b> The last worker picks the next token and sends it back. Each worker keeps its own conversation state, so only a few kilobytes cross the network for each token.</li>
+</ol>
+
+<p>The model's weights stay loaded on the workers; they are not sent over the network for each request.</p>
+
+<hr>
+
+<h2 id="architecture">Architecture</h2>
+
+<p>Sangama keeps three questions apart: who may join, how computers reach each other, and where the model runs.</p>
+
+<pre>
+                  +---------------------------------------------+
+                  |                   Portal                    |
+                  | invitations, signed membership, revocation  |
+                  +---------------------------------------------+
+                        |                   |                  |
+                  signed membership list, checked every few seconds
+                        v                   v                  v
+                  +----------+        +----------+       +----------+
+                  |  Client  | &lt;----&gt; |  Relay   | &lt;---&gt; | Workers  |
+                  +----------+        +----------+       +----------+
+                        |          (only when routers         ^
+                        |           block a direct path)      |
+                        +-------------------------------------+
+                            direct encrypted connection
+</pre>
+
+<table>
+<tr><th>Part</th><th>What it does</th></tr>
+<tr><td>Worker</td><td>Contributes memory and compute. Loads its share of the model and runs those layers.</td></tr>
+<tr><td>Client</td><td>Finds workers, checks they cover the whole model, and runs requests through them.</td></tr>
+<tr><td>Portal</td><td>Issues single-use invitations, keeps the membership list, and revokes members.</td></tr>
+<tr><td>Relay</td><td>Passes encrypted traffic between computers when their routers block a direct connection. It never runs model layers and cannot read the traffic.</td></tr>
+<tr><td>Discovery</td><td>Workers advertise which part of the model they hold, in signed records.</td></tr>
+</table>
+
+<p>Every computer has its own Ed25519 identity, and all traffic is encrypted end to end (Noise over libp2p). Workers check every model file against a pinned SHA-256 list, so a route cannot silently use a different model.</p>
+
+<p><b>A limit to know about:</b> a worker can see the data it processes, so today's network is meant for trusted groups. Signatures prove who is a member, not that a computation was done correctly.</p>
+
+<hr>
+
+<h2 id="results">Results</h2>
+
+<p>Measured on 29 September 2026 with the Qwen2.5-0.5B-Instruct test model, split across two workers. The full list of test scenarios and raw results is <a href="https://github.com/devdil/sangama/tree/main/docs/test-results">in the repository</a>.</p>
+
+<ul>
+<li><b>Same answer everywhere.</b> At full precision, every combination produced exactly the same tokens: CPU, Apple Metal, NVIDIA CUDA and Vulkan, with either of the two engines, mixed in any order.</li>
+<li><b>One machine, two GPUs:</b> 103 tokens per second (220 with 4-bit weights).</li>
+<li><b>Across the Internet:</b> 3.1 tokens per second between a Mac on a home network and a GPU in a US datacenter, 260-370 ms apart. Distance, not computing power, sets the pace.</li>
+<li><b>Through a relay:</b> 7 out of 7 generations were exact over four minutes of continuous use, with every connection forced through the relay.</li>
+</ul>
+
+<table>
+<tr><th>Route (layers 0-11 &rarr; 12-23)</th><th>Where</th><th>Result</th><th>Speed</th></tr>
+<tr><td>Candle Metal &rarr; Candle Metal</td><td>One Mac</td><td>Reference output</td><td>-</td></tr>
+<tr><td>Candle CUDA &rarr; Candle CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>55 tokens/s</td></tr>
+<tr><td>llama.cpp CUDA &rarr; llama.cpp CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>103 tokens/s</td></tr>
+<tr><td>llama.cpp Vulkan &rarr; llama.cpp Vulkan</td><td>Two GPUs, one machine</td><td>Identical</td><td>106 tokens/s</td></tr>
+<tr><td>llama.cpp Vulkan &rarr; Candle CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>86 tokens/s</td></tr>
+<tr><td>Candle Metal &rarr; Candle CUDA</td><td>Home Mac &rarr; US datacenter</td><td>Identical</td><td>3.1 tokens/s</td></tr>
+<tr><td>Candle CUDA &rarr; Candle Metal</td><td>US datacenter &rarr; home Mac</td><td>Identical</td><td>1.2 tokens/s</td></tr>
+<tr><td>Candle Metal &rarr; Candle CUDA, all through a relay</td><td>Home Mac, US GPU, relay</td><td>Identical, 7 of 7</td><td>0.6 tokens/s</td></tr>
+<tr><td>4-bit and full-precision workers mixed</td><td>Any</td><td>Refused, by design</td><td>-</td></tr>
+</table>
+
+<p class="small">Speeds are single runs of a small test model and include network delay; they are not benchmarks. 4-bit output is only reproducible with the same weight file on the same kind of GPU, so a route must use one published file.</p>
+
+<h3>What the testing caught</h3>
+<ul>
+<li><b>GPU context bug:</b> NVIDIA CUDA workers failed on every conversation after the first. Found, fixed, and re-tested over five conversations in a row.</li>
+<li><b>Relay time limit:</b> relay connections closed after two minutes, cutting off requests in progress. Raised to one hour; four minutes of continuous traffic then ran cleanly.</li>
+<li><b>Mixed weight files:</b> two differently compressed copies of the same model were accepted in one route. Workers now report a checksum, and such routes are refused.</li>
+</ul>
+
+<hr>
+
+<h2 id="hardware">Hardware</h2>
+
+<table>
+<tr><th>Hardware</th><th>How</th><th>Status</th></tr>
+<tr><td>Apple Silicon Macs</td><td>Metal, using unified memory</td><td>Tested</td></tr>
+<tr><td>NVIDIA GPUs</td><td>CUDA or Vulkan on Linux, one GPU per worker</td><td>Tested</td></tr>
+<tr><td>Any CPU</td><td>macOS and Linux</td><td>Tested</td></tr>
+<tr><td>AMD, Intel, Qualcomm GPUs</td><td>Vulkan or ROCm, through llama.cpp</td><td>Built, not yet tested</td></tr>
+<tr><td>Windows</td><td>CUDA or Vulkan</td><td>Not yet tested</td></tr>
+</table>
+
+<hr>
+
+<h2 id="roadmap">Roadmap</h2>
+<ul>
+<li><b>Large open models.</b> Qwen3.5-397B is the first target: about 3 to 5 well-placed computers per copy, with 4-bit weights.</li>
+<li><b>Published weights.</b> Compress the model once and publish it in slices with checksums, so each worker downloads only the layers it serves.</li>
+<li><b>More hardware.</b> Test runs on AMD, Intel, Qualcomm and Windows, then phones.</li>
+<li><b>Nearby routes.</b> Keep each route within one city or region, since network distance sets the speed.</li>
+<li><b>Two home networks.</b> The next acceptance test: two home routers, a relay, and direct connections through NAT.</li>
+</ul>
+
+<hr>
+
+<h2 id="contact">Contact</h2>
+<p>Want to contribute a GPU, join a test network, or help build Sangama? Write to <a href="mailto:hello@sangama.co">hello@sangama.co</a>.</p>
+<p>Source code: <a href="https://github.com/devdil/sangama">github.com/devdil/sangama</a> &middot; <a href="https://github.com/devdil/sangama/blob/main/CONTRIBUTING.md">Contributor guide</a></p>
+
+<hr>
+<p class="small">Sangama is open source under the MIT License.</p>
+
+</body>
+</html>
