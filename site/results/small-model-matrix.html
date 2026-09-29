@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Small model across CPUs, GPUs and the Internet - Sangama</title>
+<meta name="description" content="Qwen2.5-0.5B split across two workers on CPUs, Apple Metal, NVIDIA CUDA and Vulkan, locally, across the Internet and through a relay.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>A small model across CPUs, GPUs and the Internet</h1>
+<p><i>29 September 2026</i></p>
+
+<p>Measured on 29 September 2026 with the Qwen2.5-0.5B-Instruct test model, split across two workers. The full list of test scenarios and raw results is <a href="https://github.com/devdil/sangama/tree/main/docs/test-results">in the repository</a>.</p>
+
+<ul>
+<li><b>Same answer everywhere.</b> At full precision, every combination produced exactly the same tokens: CPU, Apple Metal, NVIDIA CUDA and Vulkan, with either of the two engines, mixed in any order.</li>
+<li><b>One machine, two GPUs:</b> 103 tokens per second (220 with 4-bit weights).</li>
+<li><b>Across the Internet:</b> 3.1 tokens per second between a Mac on a home network and a GPU in a US datacenter, 260-370 ms apart. Distance, not computing power, sets the pace.</li>
+<li><b>Through a relay:</b> 7 out of 7 generations were exact over four minutes of continuous use, with every connection forced through the relay.</li>
+</ul>
+
+<table>
+<tr><th>Route (layers 0-11 &rarr; 12-23)</th><th>Where</th><th>Result</th><th>Speed</th></tr>
+<tr><td>Candle Metal &rarr; Candle Metal</td><td>One Mac</td><td>Reference output</td><td>-</td></tr>
+<tr><td>Candle CUDA &rarr; Candle CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>55 tokens/s</td></tr>
+<tr><td>llama.cpp CUDA &rarr; llama.cpp CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>103 tokens/s</td></tr>
+<tr><td>llama.cpp Vulkan &rarr; llama.cpp Vulkan</td><td>Two GPUs, one machine</td><td>Identical</td><td>106 tokens/s</td></tr>
+<tr><td>llama.cpp Vulkan &rarr; Candle CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>86 tokens/s</td></tr>
+<tr><td>Candle Metal &rarr; Candle CUDA</td><td>Home Mac &rarr; US datacenter</td><td>Identical</td><td>3.1 tokens/s</td></tr>
+<tr><td>Candle CUDA &rarr; Candle Metal</td><td>US datacenter &rarr; home Mac</td><td>Identical</td><td>1.2 tokens/s</td></tr>
+<tr><td>Candle Metal &rarr; Candle CUDA, all through a relay</td><td>Home Mac, US GPU, relay</td><td>Identical, 7 of 7</td><td>0.6 tokens/s</td></tr>
+<tr><td>4-bit and full-precision workers mixed</td><td>Any</td><td>Refused, by design</td><td>-</td></tr>
+</table>
+
+<p class="small">Speeds are single runs of a small test model and include network delay; they are not benchmarks. 4-bit output is only reproducible with the same weight file on the same kind of GPU, so a route must use one published file.</p>
+
+<h3>What the testing caught</h3>
+<ul>
+<li><b>GPU context bug:</b> NVIDIA CUDA workers failed on every conversation after the first. Found, fixed, and re-tested over five conversations in a row.</li>
+<li><b>Relay time limit:</b> relay connections closed after two minutes, cutting off requests in progress. Raised to one hour; four minutes of continuous traffic then ran cleanly.</li>
+<li><b>Mixed weight files:</b> two differently compressed copies of the same model were accepted in one route. Workers now report a checksum, and such routes are refused.</li>
+</ul>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:hello@sangama.co">hello@sangama.co</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>

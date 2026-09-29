@@ -1,6 +1,6 @@
 # Sangama
 
-[![Rust checks](https://github.com/devdil/sangama/actions/workflows/ci.yml/badge.svg)](https://github.com/devdil/sangama/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust checks](https://github.com/devdil/sangama/actions/workflows/ci.yml/badge.svg)](https://github.com/devdil/sangama/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Discord](https://img.shields.io/badge/chat-Discord-5865F2.svg)](https://discord.gg/uYGxZ2f3d)
 
 **Sangama (संगम)** means confluence: devices coming together to run one AI model.
 
@@ -8,7 +8,7 @@ Sangama is a Rust project that lets computers share the work of running a langua
 
 **Today:** an experimental network for trusted, invited peers. Real Qwen inference works across workers, with encrypted connections, relay support, automatic loading of prepared shards, and a local UI. It is not yet a production-ready public network.
 
-[Try it locally](#try-it-locally) · [Architecture](#architecture) · [Join a network](docs/admitted-mesh.md) · [Contribute](CONTRIBUTING.md)
+[Try it locally](#try-it-locally) · [Architecture](#architecture) · [Join a network](docs/admitted-mesh.md) · [Contribute](CONTRIBUTING.md) · [Discord](https://discord.gg/uYGxZ2f3d) · [Results](https://sangama.pages.dev/results/)
 
 ## The goal
 
@@ -138,6 +138,8 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | Start here | What you will find |
 |---|---|
 | [Contributor guide](CONTRIBUTING.md) | Setup, source map, tests and useful first contributions |
+| [Discord](https://discord.gg/uYGxZ2f3d) | Questions, test networks and project chat |
+| [Results](https://sangama.pages.dev/results/) | Test write-ups, newest first |
 | [Fundamentals](docs/fundamentals.md) | Tokens, weights, layers, KV caches and distributed inference |
 | [Large models](docs/large-models.md) | Peers needed and expected speed for Qwen3.5-397B, Kimi K2.6 and larger |
 | [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |

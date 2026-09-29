@@ -89,6 +89,8 @@ Generated weights, keys, `.mesh/`, `.tools/`, `runs/` and `work/` are ignored. P
 
 ## Community and licensing
 
+Ask questions and meet other contributors on [Discord](https://discord.gg/uYGxZ2f3d).
+
 By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](SECURITY.md), not in public issues.
 
 Contributions are accepted under the project's [MIT License](LICENSE): by submitting a pull request you agree your change is licensed under the same terms.
