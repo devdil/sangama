@@ -488,8 +488,11 @@ pub async fn run(path: &Path) -> Result<()> {
                 reservation_duration: Duration::from_secs(120),
                 max_circuits: 32,
                 max_circuits_per_peer: 4,
-                max_circuit_duration: Duration::from_secs(120),
-                max_circuit_bytes: 128 * 1024 * 1024,
+                // A circuit carries whole inference sessions. Closing it mid-request fails
+                // that request (there is no safe replay of a KV-cache step), so circuits must
+                // outlive normal sessions; admitted-member and per-peer limits still apply.
+                max_circuit_duration: Duration::from_secs(60 * 60),
+                max_circuit_bytes: 1024 * 1024 * 1024,
                 ..Default::default()
             };
             let codec = rr::cbor::codec::Codec::default()

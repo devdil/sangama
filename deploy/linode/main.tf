@@ -58,6 +58,11 @@ locals {
     ]
   }
 }
+variable "mesh_relay" {
+  description = "Open TCP 9000 for the admitted-mesh relay (Circuit Relay v2) on this server"
+  type        = bool
+  default     = false
+}
 resource "linode_firewall" "portal" {
   label           = "sangama-portal"
   inbound_policy  = "DROP"
@@ -76,6 +81,16 @@ resource "linode_firewall" "portal" {
     ports    = "80,443"
     ipv4     = ["0.0.0.0/0"]
     ipv6     = ["::/0"]
+  }
+  dynamic "inbound" {
+    for_each = var.mesh_relay ? [1] : []
+    content {
+      label    = "mesh-relay"
+      action   = "ACCEPT"
+      protocol = "TCP"
+      ports    = "9000"
+      ipv4     = ["0.0.0.0/0"]
+    }
   }
 }
 resource "linode_instance" "portal" {

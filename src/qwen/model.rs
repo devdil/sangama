@@ -294,6 +294,7 @@ impl ShardedModel {
         seq_len: usize,
         position: usize,
     ) -> Result<Vec<f32>> {
+        self.bind()?;
         let mut xs = if let Some(embeddings) = &self.embeddings {
             let input = Tensor::new(tokens, &self.device)?.unsqueeze(0)?;
             embeddings.forward(&input)?
@@ -326,7 +327,26 @@ impl ShardedModel {
         xs.flatten_all()?.to_vec1()
     }
 
+    /// CUDA contexts are current per thread, and requests and resets run on whichever runtime
+    /// thread picks them up. Without this, the first CUDA call on a new thread records
+    /// CUDA_ERROR_INVALID_CONTEXT and every later call on the device fails.
+    fn bind(&self) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if let Device::Cuda(device) = &self.device {
+            device
+                .cuda_stream()
+                .context()
+                .bind_to_thread()
+                .map_err(candle::Error::wrap)?;
+        }
+        Ok(())
+    }
+
     pub fn clear(&mut self) {
+        // Dropping cached CUDA tensors frees device memory, which also needs the context.
+        if let Err(error) = self.bind() {
+            tracing::warn!(%error, "could not bind CUDA context before clearing the KV cache");
+        }
         for layer in &mut self.layers {
             layer.clear_kv_cache();
         }

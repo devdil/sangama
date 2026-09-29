@@ -200,7 +200,7 @@ Current bounded test-network limits:
 
 - 64 established connections, four per peer, 16 pending inbound/outbound.
 - 64 relay reservations, one per peer; 32 circuits, four per peer.
-- Each relay circuit: 120 seconds and 128 MiB, plus libp2p reservation/circuit rate limits.
+- Each relay circuit: one hour and 1 GiB, plus libp2p reservation/circuit rate limits. With the earlier 120-second limit, a request in flight when its circuit closed failed (measured on a real relay, 2026-09-29).
 - 4 MiB inference frames, 16 outbound RPCs, eight concurrent local worker forwards.
 - 1,200 RPC requests and 128 MiB request/response payload per peer per minute.
 - 120 inbound advertisement writes per source peer per minute; 8 KiB signed records.
