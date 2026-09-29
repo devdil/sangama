@@ -1,0 +1,56 @@
+--- a/src/models/qwen35moe.cpp
++++ b/src/models/qwen35moe.cpp
+@@ -169,6 +169,12 @@
+     ggml_tensor * cur;
+     ggml_tensor * inpL;
+ 
++    // layer-split stage bounds, as in qwen35.cpp. Absolute indices are preserved, so per-layer
++    // hparams (is_recr(), rope sections) stay correct for a stage that starts mid-model.
++    const int il_beg = (int) cparams.il_beg;
++    const int il_end = (int) std::min<uint32_t>(cparams.il_end, (uint32_t) n_layer);
++    const bool is_last_stage = (il_end == n_layer);
++
+     inpL = build_inp_embd(model.tok_embd);
+ 
+     cb(inpL, "model.input_embed", -1);
+@@ -176,10 +182,11 @@
+     auto * inp = build_inp_mem_hybrid();
+ 
+     ggml_tensor * inp_pos     = build_inp_pos();
+-    ggml_tensor * inp_out_ids = build_inp_out_ids();
++    // A non-final stage returns every token's residual, so it selects no output rows.
++    ggml_tensor * inp_out_ids = is_last_stage ? build_inp_out_ids() : nullptr;
+ 
+     // MTP/NextN layers are loaded as extra decoder blocks but not executed in the main pass.
+-    for (int il = 0; il < n_layer; ++il) {
++    for (int il = il_beg; il < il_end; ++il) {
+         res->t_layer_inp[il] = inpL;
+ 
+         ggml_tensor * inpSA = inpL;
+@@ -198,7 +205,7 @@
+             cur = build_layer_attn(inp->get_attn(), cur, inp_pos, sections, il);
+         }
+ 
+-        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
++        if (il == il_end - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+             cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+             inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+         }
+@@ -230,6 +237,17 @@
+     }
+     cur = inpL;
+ 
++    if (!is_last_stage) {
++        // Non-final stage: emit the raw residual stream entering layer il_end, before
++        // output_norm and the LM head. The caller requests all outputs as embeddings.
++        cb(cur, "result_embd_hidden", -1);
++        res->t_embd   = cur;
++        res->t_logits = nullptr;
++
++        ggml_build_forward_expand(gf, cur);
++        return;
++    }
++
+     // post-norm hidden state feeds both the LM head and the MTP seed below
+     cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
+ 

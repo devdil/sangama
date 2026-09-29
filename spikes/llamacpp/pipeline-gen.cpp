@@ -69,10 +69,16 @@ static std::vector<float> run_a(Stage & a, const std::vector<llama_token> & toks
 
 // Stage B: hidden states at positions [pos, pos+n) -> next token from the last position.
 static llama_token run_b(Stage & bstage, const std::vector<float> & h, int n, int pos, int n_embd, int n_vocab) {
-    llama_batch b = llama_batch_init(n, n_embd, 1);
+    // M-RoPE models read four position sections per token when the batch carries hidden states.
+    const llama_rope_type rope = llama_model_rope_type(bstage.model);
+    const int sections = (rope == LLAMA_ROPE_TYPE_MROPE || rope == LLAMA_ROPE_TYPE_IMROPE) ? 4 : 1;
+    llama_batch b = llama_batch_init(n * sections, n_embd, 1);
     memcpy(b.embd, h.data(), (size_t) n * n_embd * sizeof(float));
+    for (int j = 0; j < sections; ++j) {
+        for (int i = 0; i < n; ++i) b.pos[j * n + i] = pos + i;
+    }
     for (int i = 0; i < n; ++i) {
-        b.pos[i] = pos + i; b.n_seq_id[i] = 1; b.seq_id[i][0] = 0; b.logits[i] = (i == n - 1);
+        b.n_seq_id[i] = 1; b.seq_id[i][0] = 0; b.logits[i] = (i == n - 1);
     }
     b.n_tokens = n;
     if (llama_decode(bstage.ctx, b) != 0) { fprintf(stderr, "stage B decode failed\n"); exit(1); }
@@ -129,8 +135,9 @@ int main(int argc, char ** argv) {
     llama_free(full.ctx); llama_model_free(full.model);
 
     // Two stages, each with only its own layers and KV cache.
-    Stage a = load_stage(path, 0, split, true);
-    Stage b = load_stage(path, split, n_layer, false);
+    // STAGE_A_GGUF / STAGE_B_GGUF: files holding only that stage's layers (scripts/split-gguf.py).
+    Stage a = load_stage(getenv("STAGE_A_GGUF") ? getenv("STAGE_A_GGUF") : path, 0, split, true);
+    Stage b = load_stage(getenv("STAGE_B_GGUF") ? getenv("STAGE_B_GGUF") : path, split, n_layer, false);
     std::vector<llama_token> got;
     t0 = std::chrono::steady_clock::now();
     auto h = run_a(a, prompt, 0, n_embd);

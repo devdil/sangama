@@ -1,0 +1,24 @@
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -1095,8 +1095,21 @@
+                 || tn.tensor == LLM_TENSOR_OUTPUT_NORM;
+         }
+ 
++        // A stage that starts mid-model takes hidden states, not tokens, so it never reads the
++        // token embedding. The tied-embedding LM head arrives separately as TOKEN_EMBD with
++        // TENSOR_DUPLICATED and is still loaded. This lets a per-stage file omit token_embd.
++        if (!skip && tn.bid < 0 && hparams.il_load_beg > 0 && tn.tensor == LLM_TENSOR_TOKEN_EMBD
++                && !(flags & TENSOR_DUPLICATED)) {
++            skip = true;
++        }
++
+         if (skip) {
+             flags |= TENSOR_NOT_REQUIRED | TENSOR_SKIP;
++        } else if (!is_last_stage && tn.tensor == LLM_TENSOR_TOKEN_EMBD && (flags & TENSOR_DUPLICATED)) {
++            // The tied LM-head alias is never used before the final stage. Optional (not
++            // skipped), so a file that has token_embd still loads it exactly as before, and a
++            // per-stage file without it loads too.
++            flags |= TENSOR_NOT_REQUIRED;
+         }
+     }
+ 

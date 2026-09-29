@@ -143,6 +143,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |
 | [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
+| [Model slices](docs/model-slices.md) | Per-layer slices of large models, so each worker downloads only its layers |
 | [llama.cpp engine](docs/llamacpp.md) | Vulkan, ROCm and quantized GGUF workers that share routes with Candle |
 | [GPU testing](docs/gpu-testing.md) | GPU slices (MIG) in containers, and why Mac containers cannot use Metal |
 | [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
