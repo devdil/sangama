@@ -107,8 +107,14 @@ fn main() {
         _ => {}
     }
     if feature("cuda") {
-        if let Some(root) = env::var_os("CUDA_PATH").or_else(|| env::var_os("CUDA_HOME")) {
-            let root = PathBuf::from(root);
+        // Standard toolkit location when neither variable is set (e.g. NVIDIA's CUDA images).
+        let root = env::var_os("CUDA_PATH")
+            .or_else(|| env::var_os("CUDA_HOME"))
+            .map(PathBuf::from)
+            .or_else(|| Some(PathBuf::from("/usr/local/cuda")).filter(|p| p.exists()));
+        println!("cargo:rerun-if-env-changed=CUDA_PATH");
+        println!("cargo:rerun-if-env-changed=CUDA_HOME");
+        if let Some(root) = root {
             println!(
                 "cargo:rustc-link-search=native={}",
                 root.join("lib64").display()
