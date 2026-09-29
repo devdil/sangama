@@ -409,7 +409,10 @@ async fn worker(
 
 pub async fn run(path: &Path) -> Result<()> {
     let c: Config = serde_json::from_slice(&std::fs::read(path)?)?;
-    ensure!(c.bridges.len() <= 8, "too many bridges");
+    ensure!(
+        c.bridges.len() <= crate::qwen::MAX_SHARDS,
+        "too many bridges"
+    );
     if let Some(w) = c.worker {
         crate::security::loopback(w)?;
     }
@@ -486,8 +489,10 @@ pub async fn run(path: &Path) -> Result<()> {
                 max_reservations: 64,
                 max_reservations_per_peer: 1,
                 reservation_duration: Duration::from_secs(120),
-                max_circuits: 32,
-                max_circuits_per_peer: 4,
+                // A client holds one circuit per worker on its route, and routes over many
+                // small devices can have up to MAX_SHARDS stages.
+                max_circuits: 256,
+                max_circuits_per_peer: 64,
                 // A circuit carries whole inference sessions. Closing it mid-request fails
                 // that request (there is no safe replay of a KV-cache step), so circuits must
                 // outlive normal sessions; admitted-member and per-peer limits still apply.

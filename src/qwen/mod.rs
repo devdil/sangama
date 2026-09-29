@@ -23,6 +23,9 @@ pub const CONTEXT_LIMIT: usize = 4096;
 /// Execution backends a worker may use. Workers in one route may use different backends.
 /// Vulkan and ROCm are available only with the llama.cpp engine.
 pub const DEVICES: [&str; 5] = ["cpu", "metal", "cuda", "vulkan", "rocm"];
+/// Most shards (pipeline stages) a route may have. Routes over many small devices need more
+/// than a handful; automatic placement (`mesh-allocate`) is still limited to 8.
+pub const MAX_SHARDS: usize = 32;
 /// Largest completion one request may ask for; prompt plus output must still fit CONTEXT_LIMIT.
 pub const OUTPUT_LIMIT: usize = 512;
 
@@ -151,8 +154,8 @@ pub fn load_manifest(dir: &Path) -> Result<(Manifest, String)> {
         ".safetensors"
     };
     ensure!(
-        (1..=8).contains(&manifest.shards.len()),
-        "expected 1..=8 shards"
+        (1..=MAX_SHARDS).contains(&manifest.shards.len()),
+        "expected 1..={MAX_SHARDS} shards"
     );
     let layers = manifest.layers();
     let mut next = 0;

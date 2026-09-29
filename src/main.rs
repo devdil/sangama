@@ -181,6 +181,9 @@ enum Command {
         /// GGUF file name in the model directory, listed in its gguf.json.
         #[arg(long)]
         gguf: Option<String>,
+        /// Refuse to load a shard that needs more memory than this (MiB).
+        #[arg(long)]
+        memory_budget_mib: Option<u64>,
         #[arg(long, default_value = "127.0.0.1:7901")]
         listen: SocketAddr,
         /// Explicit permitted downstream loopback/tunnel endpoints.
@@ -455,6 +458,7 @@ async fn main() -> Result<()> {
             device,
             engine,
             gguf,
+            memory_budget_mib,
             listen,
             allow_next,
         } => {
@@ -465,6 +469,7 @@ async fn main() -> Result<()> {
                 sangama::qwen::network::EngineChoice {
                     name: &engine,
                     gguf: gguf.as_deref(),
+                    memory_budget_mib,
                 },
                 listen,
                 token(cli.token)?,

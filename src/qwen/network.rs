@@ -84,6 +84,8 @@ struct Worker {
 pub struct EngineChoice<'a> {
     pub name: &'a str,
     pub gguf: Option<&'a str>,
+    /// Cap on the memory this worker may use, e.g. to act like an average laptop.
+    pub memory_budget_mib: Option<u64>,
 }
 
 pub async fn serve(
@@ -116,8 +118,12 @@ pub async fn serve(
             // Create the device first: it reports a missing build feature clearly, and a CUDA
             // context's own memory is then excluded from the measured budget.
             let device = device(backend)?;
-            let memory =
-                crate::resources::check(spec.file_bytes, spec.end - spec.start, None, backend)?;
+            let memory = crate::resources::check(
+                spec.file_bytes,
+                spec.end - spec.start,
+                engine.memory_budget_mib,
+                backend,
+            )?;
             let file = dir.join(&spec.file);
             check_hash(&file, &spec.sha256)?;
             let cfg = config(dir)?;
@@ -140,7 +146,7 @@ pub async fn serve(
                 memory,
             )
         }
-        "llamacpp" => open_llamacpp(dir, &manifest, &spec, &hash, backend, engine.gguf)?,
+        "llamacpp" => open_llamacpp(dir, &manifest, &spec, &hash, backend, &engine)?,
         other => anyhow::bail!("unknown engine {other}"),
     };
     let state = Worker {
@@ -197,9 +203,10 @@ fn open_llamacpp(
     spec: &ShardSpec,
     hash: &str,
     backend: &str,
-    gguf: Option<&str>,
+    engine: &EngineChoice<'_>,
 ) -> Result<(Engine, String, Option<String>, crate::resources::Memory)> {
     use anyhow::Context;
+    let gguf = engine.gguf;
     use sangama_llama_stage::{Options, Stage, gpu_memory};
     let gguf = super::approved_gguf(
         dir,
@@ -228,7 +235,7 @@ fn open_llamacpp(
     // Until each worker has its own slice of the GGUF, budget for the whole file.
     let layers = (spec.end - spec.start) as u64;
     let required = gguf.file_bytes + layers * 2 * 4096 * 2 * 64 * 4 + 384 * 1024 * 1024;
-    let memory = crate::resources::check_required(required, available, None)?;
+    let memory = crate::resources::check_required(required, available, engine.memory_budget_mib)?;
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let stage = Stage::open(
         &dir.join(&gguf.file),
@@ -268,7 +275,7 @@ fn open_llamacpp(
     _: &ShardSpec,
     _: &str,
     _: &str,
-    _: Option<&str>,
+    _: &EngineChoice<'_>,
 ) -> Result<(Engine, String, Option<String>, crate::resources::Memory)> {
     anyhow::bail!("rebuild with --features llamacpp (or llamacpp-metal, -cuda, -vulkan, -hip)")
 }
@@ -362,7 +369,10 @@ fn validate(frame: &Frame, state: &Worker) -> Result<()> {
         (1..=512).contains(&h.seq_len) && h.position <= CONTEXT_LIMIT - h.seq_len,
         "context/sequence limit exceeded"
     );
-    ensure!(!h.route.is_empty() && h.route.len() <= 8, "invalid route");
+    ensure!(
+        !h.route.is_empty() && h.route.len() <= super::MAX_SHARDS,
+        "invalid route"
+    );
     let index = state.info.shard.index;
     ensure!(
         h.route.len() == state.manifest.shards.len() - index,

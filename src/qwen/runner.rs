@@ -122,7 +122,87 @@ pub struct Report {
     pub distributed: Timing,
     pub workers: Vec<Info>,
     pub last_trace: Vec<Trace>,
+    /// Where each token's time went: compute per stage vs everything else (network, relay).
+    pub breakdown: Breakdown,
     pub notes: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+pub struct StageTiming {
+    pub shard: usize,
+    pub start: usize,
+    pub end: usize,
+    /// Compute time for the whole prompt (first token).
+    pub prompt_forward_ms: f64,
+    pub decode_forward_ms_p50: f64,
+    pub decode_forward_ms_p95: f64,
+}
+
+/// Per-token time split into each stage's compute and the remainder: network hops, relay,
+/// serialization and client work. Decode figures cover tokens after the first.
+#[derive(Serialize)]
+pub struct Breakdown {
+    pub stages: Vec<StageTiming>,
+    pub prompt_ms: f64,
+    pub prompt_compute_ms: f64,
+    pub decode_ms_p50: f64,
+    pub decode_ms_p95: f64,
+    pub decode_compute_ms_p50: f64,
+    pub decode_other_ms_p50: f64,
+    pub decode_other_ms_p95: f64,
+}
+
+fn percentile(values: &[f64], p: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    sorted[((sorted.len() - 1) as f64 * p).round() as usize]
+}
+
+impl Breakdown {
+    fn new(times: &[f64], stage_ms: &[Vec<f64>], trace: &[Trace]) -> Self {
+        let compute: Vec<f64> = stage_ms.iter().map(|s| s.iter().sum()).collect();
+        let decode = times.get(1..).unwrap_or(&[]);
+        let decode_compute = compute.get(1..).unwrap_or(&[]);
+        let other: Vec<f64> = decode
+            .iter()
+            .zip(decode_compute)
+            .map(|(t, c)| (t - c).max(0.0))
+            .collect();
+        let stages = trace
+            .iter()
+            .map(|t| {
+                let per_token: Vec<f64> = stage_ms
+                    .iter()
+                    .skip(1)
+                    .filter_map(|s| s.get(t.shard).copied())
+                    .collect();
+                StageTiming {
+                    shard: t.shard,
+                    start: t.start,
+                    end: t.end,
+                    prompt_forward_ms: stage_ms
+                        .first()
+                        .and_then(|s| s.get(t.shard).copied())
+                        .unwrap_or(0.0),
+                    decode_forward_ms_p50: percentile(&per_token, 0.5),
+                    decode_forward_ms_p95: percentile(&per_token, 0.95),
+                }
+            })
+            .collect();
+        Self {
+            stages,
+            prompt_ms: times.first().copied().unwrap_or(0.0),
+            prompt_compute_ms: compute.first().copied().unwrap_or(0.0),
+            decode_ms_p50: percentile(decode, 0.5),
+            decode_ms_p95: percentile(decode, 0.95),
+            decode_compute_ms_p50: percentile(decode_compute, 0.5),
+            decode_other_ms_p50: percentile(&other, 0.5),
+            decode_other_ms_p95: percentile(&other, 0.95),
+        }
+    }
 }
 
 struct Processes(Vec<Child>);
@@ -549,6 +629,7 @@ async fn execute_chat(
         let mut position = 0;
         let mut maximum_error = 0.0_f32;
         let mut last_trace = Vec::new();
+        let mut token_stage_ms: Vec<Vec<f64>> = Vec::new();
         let mut finish_reason = "max_tokens";
         let limit = local.as_ref().map_or(options.max_tokens, |b| b.ids.len());
         for index in 0..limit {
@@ -558,22 +639,29 @@ async fn execute_chat(
                 &ids[ids.len() - 1..]
             };
             let now = Instant::now();
-            let mut last = None;
+            let mut last: Option<Frame> = None;
+            // Compute time each stage spent on this token, summed over prompt chunks.
+            let mut stage_ms = vec![0.0; route.len()];
             for chunk in context.chunks(chunk_tokens) {
                 if let Some(sender) = &deltas {
                     ensure!(!sender.is_closed(), "client disconnected");
                 }
-                last = Some(
-                    step(
-                        &http,
-                        &options.token,
-                        &request(&model_hash, &session, &route, chunk, position, !verify),
-                        vocab_size,
-                    )
-                    .await?,
-                );
+                let response = step(
+                    &http,
+                    &options.token,
+                    &request(&model_hash, &session, &route, chunk, position, !verify),
+                    vocab_size,
+                )
+                .await?;
+                for trace in &response.header.trace {
+                    if let Some(total) = stage_ms.get_mut(trace.shard) {
+                        *total += trace.forward_ms;
+                    }
+                }
+                last = Some(response);
                 position += chunk.len();
             }
+            token_stage_ms.push(stage_ms);
             let result = last.context("empty context")?;
             let id = if result.header.sample {
                 result.header.tokens[0]
@@ -607,11 +695,19 @@ async fn execute_chat(
                 break;
             }
         }
-        Ok((ids, times, maximum_error, last_trace, finish_reason))
+        Ok((
+            ids,
+            times,
+            maximum_error,
+            last_trace,
+            finish_reason,
+            token_stage_ms,
+        ))
     }
     .await;
     let cleanup = reset(&http, &addresses, &options.token, &session).await;
-    let (ids, times, maximum_error, trace, finish_reason) = measurement?;
+    let (ids, times, maximum_error, trace, finish_reason, token_stage_ms) = measurement?;
+    let breakdown = Breakdown::new(&times, &token_stage_ms, &trace);
     cleanup?;
     let tokens_match = local.as_ref().map(|local| ids == local.ids);
     let report = Report {
@@ -656,6 +752,7 @@ async fn execute_chat(
         distributed_token_ids: ids,
         workers: infos,
         last_trace: trace,
+        breakdown,
         notes: vec![
             if verify {
                 "Every distributed logit is compared with upstream Candle's unsplit Qwen implementation until any token divergence."
