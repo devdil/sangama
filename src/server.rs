@@ -65,6 +65,18 @@ pub(crate) async fn authenticate(
     next.run(request).await
 }
 
+/// Sets TCP_NODELAY on accepted sockets. Without it, a response written in parts waits for the
+/// peer's delayed ACK (about 40 ms on Linux) on every request; measured as ~80 ms per hop on a
+/// 20-stage route.
+pub fn nodelay(
+    listener: TcpListener,
+) -> axum::serve::TapIo<TcpListener, fn(&mut tokio::net::TcpStream)> {
+    use axum::serve::ListenerExt;
+    listener.tap_io(|tcp| {
+        let _ = tcp.set_nodelay(true);
+    })
+}
+
 pub fn client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .no_proxy()
@@ -157,7 +169,7 @@ pub async fn coordinator(listener: TcpListener, token: String) -> Result<Service
         .layer(middleware::from_fn_with_state(token, authenticate))
         .with_state(state);
     let task = tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
+        if let Err(error) = axum::serve(nodelay(listener), app).await {
             tracing::error!(%error, "coordinator stopped");
         }
     });
@@ -315,7 +327,7 @@ pub async fn worker(listener: TcpListener, config: WorkerConfig) -> Result<Servi
         .layer(middleware::from_fn_with_state(token.clone(), authenticate))
         .with_state(state);
     let task = tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
+        if let Err(error) = axum::serve(nodelay(listener), app).await {
             tracing::error!(%error, "worker stopped");
         }
     });

@@ -575,8 +575,13 @@ async fn execute_chat(
             infos[0].precision,
             info.precision
         );
-        // Candle shards are pinned by the manifest; GGUF files must be the same file.
-        if let Some(sha) = &info.weights_sha256 {
+        // Candle shards are pinned by the manifest; GGUF files must be the same file. A sliced
+        // model's stages are different files by design, each pinned by its shard digest.
+        if let Some(sha) = info
+            .weights_sha256
+            .as_ref()
+            .filter(|_| manifest.sliced.is_none())
+        {
             ensure!(
                 infos
                     .iter()

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -472,7 +473,15 @@ pub async fn run(path: &Path) -> Result<()> {
         .set_max_packet_size(32 * 1024)
         .set_record_ttl(Some(Duration::from_secs(60)));
     let mut kad = libp2p::kad::Behaviour::with_config(me, store, kc);
-    kad.set_mode(Some(libp2p::kad::Mode::Server));
+    // Nodes reached through a relay are DHT clients: they store and query offers on the relay.
+    // As servers, every node would query and store on every other node through relayed
+    // circuits every few seconds (measured: 20 workers opened ~170 circuits and the relay
+    // path's round trip grew from 6 ms to ~350 ms).
+    kad.set_mode(Some(if c.relay.is_some() {
+        libp2p::kad::Mode::Client
+    } else {
+        libp2p::kad::Mode::Server
+    }));
     let transport_noise = noise::Config::new(&key)?;
     let mut swarm = SwarmBuilder::with_existing_identity(key)
         .with_tokio()
@@ -498,8 +507,18 @@ pub async fn run(path: &Path) -> Result<()> {
                 // outlive normal sessions; admitted-member and per-peer limits still apply.
                 max_circuit_duration: Duration::from_secs(60 * 60),
                 max_circuit_bytes: 1024 * 1024 * 1024,
-                ..Default::default()
-            };
+                // libp2p's defaults refill one reservation token per minute per IP and one per
+                // two minutes per peer. Members renew every ~90 s, so peers behind one NAT
+                // (measured: 21 container peers seen as one address) exhausted the IP bucket in
+                // three rounds, and any peer would exhaust its own bucket in about three hours.
+                // Only admitted members reach the relay, so the per-IP limits are generous.
+                reservation_rate_limiters: Vec::new(),
+                circuit_src_rate_limiters: Vec::new(),
+            }
+            .reservation_rate_per_peer(NonZeroU32::new(30).unwrap(), Duration::from_secs(30))
+            .reservation_rate_per_ip(NonZeroU32::new(256).unwrap(), Duration::from_secs(1))
+            .circuit_src_per_peer(NonZeroU32::new(64).unwrap(), Duration::from_secs(2))
+            .circuit_src_per_ip(NonZeroU32::new(256).unwrap(), Duration::from_secs(1));
             let codec = rr::cbor::codec::Codec::default()
                 .set_request_size_maximum((LIMIT + 1024) as u64)
                 .set_response_size_maximum((LIMIT + 1024) as u64);
@@ -610,7 +629,7 @@ pub async fn run(path: &Path) -> Result<()> {
             .layer(DefaultBodyLimit::max(LIMIT))
             .with_state(proxy);
         tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app).await {
+            if let Err(e) = axum::serve(crate::server::nodelay(listener), app).await {
                 tracing::error!(%e,"bridge stopped");
             }
         });

@@ -188,7 +188,7 @@ pub async fn serve(
         );
     }
     tracing::info!(%listen, shard = index, device = backend, engine = %engine_name, %precision, "Qwen shard loaded; ready");
-    axum::serve(listener, app)
+    axum::serve(server::nodelay(listener), app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })

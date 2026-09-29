@@ -189,7 +189,7 @@ and new workers are not supported; update every node together.
 
 ## DHT and limits
 
-The admitted mesh has a separate `/sangama/admitted-kad/1` namespace. Signed offers
+The admitted mesh has a separate `/sangama/admitted-kad/1` namespace. Nodes configured with a relay are DHT clients and keep their offers on the relay; only nodes without one (the relay itself, or a publicly reachable node) serve the DHT. Otherwise every relayed node would query and store on every other one through circuits, which grows as the square of the member count. Signed offers
 expire after 60 seconds and bind the network, peer ID, model hash and shard.
 Kademlia records persist in each node's `mesh-discovery.sqlite`; PostgreSQL is not
 the DHT. The authenticated loopback `/v1/mesh/offers` endpoint exposes discovered
@@ -199,7 +199,8 @@ metadata before use. The legacy private-overlay DHT remains available separately
 Current bounded test-network limits:
 
 - 64 established connections, four per peer, 16 pending inbound/outbound.
-- 64 relay reservations, one per peer; 32 circuits, four per peer.
+- 64 relay reservations, one per peer; 256 circuits, 64 per peer.
+- Relay rate limits: a peer may make 30 reservations in a burst, refilled one per 30 s (members renew about every 90 s), and open 64 circuits, refilled one per 2 s. Per-IP buckets hold 256 and refill one per second, because many admitted members can share one NAT address. libp2p's defaults (one reservation per minute per IP) cut off 21 container peers behind one address within five minutes (measured 2026-09-29).
 - Each relay circuit: one hour and 1 GiB, plus libp2p reservation/circuit rate limits. With the earlier 120-second limit, a request in flight when its circuit closed failed (measured on a real relay, 2026-09-29).
 - 4 MiB inference frames, 16 outbound RPCs, eight concurrent local worker forwards.
 - 1,200 RPC requests and 128 MiB request/response payload per peer per minute.
