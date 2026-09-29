@@ -73,6 +73,7 @@ See [the detailed architecture](docs/architecture.md) for source files, request 
 ## What works today
 
 - Real Qwen text generation using CPU, Apple Metal or NVIDIA CUDA, with CPU, Metal and CUDA workers able to share one route.
+- An optional [llama.cpp engine](docs/llamacpp.md) for Vulkan (AMD, Intel, Qualcomm), ROCm and quantized GGUF weights, token-identical to Candle in F32.
 - Workers that load only their assigned physical shard files.
 - Peer identity verification, single-use invitations, expiring membership and revocation.
 - Encrypted libp2p connections, a controlled relay and signed DHT discovery.
@@ -140,6 +141,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |
 | [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
+| [llama.cpp engine](docs/llamacpp.md) | Vulkan, ROCm and quantized GGUF workers that share routes with Candle |
 | [GPU testing](docs/gpu-testing.md) | GPU slices (MIG) in containers, and why Mac containers cannot use Metal |
 | [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
 | [Portal accounts](docs/portal-accounts.md) | Invite-only signup and sign-in |

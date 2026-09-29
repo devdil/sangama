@@ -1,10 +1,10 @@
 # llama.cpp layer-split spike
 
-Can llama.cpp run a contiguous range of layers per worker, passing hidden states between stages, the way Sangama's Candle workers do? If so, Sangama gets llama.cpp's GPU backends (CUDA, Metal, Vulkan, ROCm/HIP, SYCL, OpenCL, and others) and quantized GGUF weights. This spike answers that for the pinned Qwen2.5-0.5B-Instruct model. It is not wired into Sangama yet.
+Can llama.cpp run a contiguous range of layers per worker, passing hidden states between stages, the way Sangama's Candle workers do? If so, Sangama gets llama.cpp's GPU backends (CUDA, Metal, Vulkan, ROCm/HIP, SYCL, OpenCL, and others) and quantized GGUF weights. This spike answered that for the pinned Qwen2.5-0.5B-Instruct model; the result is now the [llama.cpp engine](../../docs/llamacpp.md).
 
 ## What was tested
 
-- **llama.cpp:** [unslothai/llama.cpp PR #180](https://github.com/unslothai/llama.cpp/pull/180) at `bc230ec`. It adds `LLAMA_PP_IL_BEG`/`LLAMA_PP_IL_END`: a stage runs layers `[beg, end)`, takes hidden states through `llama_batch.embd` when `beg > 0`, and emits the residual stream instead of logits when `end < n_layer`. The loader skips weights outside the range. The PR wires Qwen3 MoE and Qwen3.5; [`qwen2-layer-split.patch`](qwen2-layer-split.patch) applies the same change to Qwen2.
+- **llama.cpp:** [unslothai/llama.cpp PR #180](https://github.com/unslothai/llama.cpp/pull/180) at `bc230ec`. It adds `LLAMA_PP_IL_BEG`/`LLAMA_PP_IL_END`: a stage runs layers `[beg, end)`, takes hidden states through `llama_batch.embd` when `beg > 0`, and emits the residual stream instead of logits when `end < n_layer`. The loader skips weights outside the range. The PR wires Qwen3 MoE and Qwen3.5; [`qwen2-layer-split.patch`](../../crates/llama-stage/patches/qwen2-layer-split.patch) applies the same change to Qwen2.
 - **Weights:** the pinned checkpoint converted to F32 GGUF (the same values Candle uses), and a Q4_K_M quantization of it.
 - **Checks:**
   - The PR's `test-layer-split` compares a split at layers 1, 12 and 23 with the unsplit model.

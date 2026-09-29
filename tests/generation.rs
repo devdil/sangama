@@ -73,6 +73,7 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
         model_hash: hash,
         shard,
         device: "metal".into(),
+        engine: "candle".into(),
         precision: "f32".into(),
         pid: 1,
     };

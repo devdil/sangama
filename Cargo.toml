@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 serde_bytes = "0.11"
 sangama-network-auth = { path = "crates/network-auth" }
+sangama-llama-stage = { path = "crates/llama-stage", optional = true }
 anyhow = "1"
 axum = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
@@ -34,6 +35,12 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 default = []
 metal = ["candle/metal", "candle-nn/metal", "candle-transformers/metal"]
 cuda = ["candle/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+# llama.cpp engine; needs scripts/fetch-llama-cpp.sh and CMake. Pick at most one GPU backend.
+llamacpp = ["dep:sangama-llama-stage"]
+llamacpp-metal = ["llamacpp", "sangama-llama-stage/metal"]
+llamacpp-cuda = ["llamacpp", "sangama-llama-stage/cuda"]
+llamacpp-vulkan = ["llamacpp", "sangama-llama-stage/vulkan"]
+llamacpp-hip = ["llamacpp", "sangama-llama-stage/hip"]
 
 [profile.release]
 lto = "thin"

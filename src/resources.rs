@@ -157,11 +157,19 @@ pub fn check(
 ) -> anyhow::Result<Memory> {
     let available = available_for(device)
         .ok_or_else(|| anyhow::anyhow!("cannot measure available {device} memory on this host"))?;
+    check_required(estimate(file_bytes, layers), available, budget_mib)
+}
+/// Compares an engine's estimated requirement with the budget: an explicit limit, or 80% of
+/// the measured available memory.
+pub fn check_required(
+    required: u64,
+    available: u64,
+    budget_mib: Option<u64>,
+) -> anyhow::Result<Memory> {
     let budget = budget_mib
         .map(|m| m.saturating_mul(1024 * 1024))
         .unwrap_or(available / 5 * 4)
         .min(available);
-    let required = estimate(file_bytes, layers);
     anyhow::ensure!(
         required <= budget,
         "shard needs estimated {} MiB including KV/workspace, budget {} MiB",

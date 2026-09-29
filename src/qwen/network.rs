@@ -1,5 +1,5 @@
 use super::{
-    CONTEXT_LIMIT, Manifest, ShardSpec, check_hash, config, device, load_manifest,
+    CONTEXT_LIMIT, Manifest, ShardSpec, check_hash, config, device, engine::Engine, load_manifest,
     model::ShardedModel, weights, wire::*,
 };
 use crate::{
@@ -31,6 +31,8 @@ pub struct Info {
     pub model_hash: String,
     pub shard: ShardSpec,
     pub device: String,
+    #[serde(default = "candle_engine")]
+    pub engine: String,
     pub precision: String,
     pub pid: u32,
     #[serde(default)]
@@ -39,13 +41,17 @@ pub struct Info {
     pub memory: Option<crate::resources::Memory>,
 }
 
+fn candle_engine() -> String {
+    "candle".into()
+}
+
 struct Session {
     id: String,
     position: usize,
     used: Instant,
 }
 struct Resident {
-    model: ShardedModel,
+    model: Engine,
     session: Option<Session>,
 }
 #[derive(Clone)]
@@ -58,10 +64,17 @@ struct Worker {
     allow_next: Vec<SocketAddr>,
 }
 
+/// Which engine a worker runs, and for llama.cpp the approved GGUF file in the model directory.
+pub struct EngineChoice<'a> {
+    pub name: &'a str,
+    pub gguf: Option<&'a str>,
+}
+
 pub async fn serve(
     dir: &Path,
     index: usize,
     backend: &str,
+    engine: EngineChoice<'_>,
     listen: SocketAddr,
     token: String,
     allow_next: Vec<SocketAddr>,
@@ -77,14 +90,23 @@ pub async fn serve(
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("shard index not in manifest"))?
         .clone();
-    // Create the device first: it reports a missing build feature clearly, and a CUDA
-    // context's own memory is then excluded from the measured budget.
-    let device = device(backend)?;
-    let memory = crate::resources::check(spec.file_bytes, spec.end - spec.start, None, backend)?;
-    let file = dir.join(&spec.file);
-    check_hash(&file, &spec.sha256)?;
-    let cfg = config(dir)?;
-    let model = ShardedModel::new(&cfg, weights(&file, &device)?, spec.start, spec.end)?;
+    let (model, precision, memory) = match engine.name {
+        "candle" => {
+            ensure!(engine.gguf.is_none(), "--gguf requires --engine llamacpp");
+            // Create the device first: it reports a missing build feature clearly, and a CUDA
+            // context's own memory is then excluded from the measured budget.
+            let device = device(backend)?;
+            let memory =
+                crate::resources::check(spec.file_bytes, spec.end - spec.start, None, backend)?;
+            let file = dir.join(&spec.file);
+            check_hash(&file, &spec.sha256)?;
+            let cfg = config(dir)?;
+            let model = ShardedModel::new(&cfg, weights(&file, &device)?, spec.start, spec.end)?;
+            (Engine::Candle(Box::new(model)), "f32".to_string(), memory)
+        }
+        "llamacpp" => open_llamacpp(dir, &spec, &hash, backend, engine.gguf)?,
+        other => anyhow::bail!("unknown engine {other}"),
+    };
     let state = Worker {
         resident: Arc::new(Mutex::new(Resident {
             model,
@@ -95,7 +117,8 @@ pub async fn serve(
             model_hash: hash,
             shard: spec,
             device: backend.into(),
-            precision: "f32".into(),
+            engine: engine.name.into(),
+            precision,
             pid: std::process::id(),
             busy: false,
             memory: Some(memory),
@@ -105,6 +128,7 @@ pub async fn serve(
         http: server::client()?,
         allow_next,
     };
+    let (engine_name, precision) = (state.info.engine.clone(), state.info.precision.clone());
     let app = Router::new()
         .route("/v1/qwen/info", get(info))
         .route("/v1/qwen/forward", post(forward))
@@ -114,13 +138,89 @@ pub async fn serve(
         .layer(middleware::from_fn_with_state(token, server::authenticate))
         .with_state(state);
     let listener = TcpListener::bind(listen).await?;
-    tracing::info!(%listen, shard = index, device = backend, "Qwen shard loaded; ready");
+    tracing::info!(%listen, shard = index, device = backend, engine = %engine_name, %precision, "Qwen shard loaded; ready");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;
     Ok(())
+}
+
+#[cfg(feature = "llamacpp")]
+fn open_llamacpp(
+    dir: &Path,
+    spec: &ShardSpec,
+    hash: &str,
+    backend: &str,
+    gguf: Option<&str>,
+) -> Result<(Engine, String, crate::resources::Memory)> {
+    use anyhow::Context;
+    use sangama_llama_stage::{Options, Stage, gpu_memory};
+    let gguf = super::approved_gguf(
+        dir,
+        gguf.context("--engine llamacpp requires --gguf")?,
+        hash,
+    )?;
+    let gpu = backend != "cpu";
+    let available = if gpu {
+        let (free, _total, name) =
+            gpu_memory().context("this build of llama.cpp has no GPU backend")?;
+        let prefix = match backend {
+            "metal" => "MTL",
+            "cuda" => "CUDA",
+            "vulkan" => "Vulkan",
+            "rocm" => "ROCm",
+            _ => anyhow::bail!("unsupported llama.cpp device {backend}"),
+        };
+        ensure!(
+            name.starts_with(prefix),
+            "requested {backend} but llama.cpp was built for {name}"
+        );
+        free
+    } else {
+        crate::resources::available().context("cannot measure host memory")?
+    };
+    // Until each worker has its own slice of the GGUF, budget for the whole file.
+    let layers = (spec.end - spec.start) as u64;
+    let required = gguf.file_bytes + layers * 2 * 4096 * 2 * 64 * 4 + 384 * 1024 * 1024;
+    let memory = crate::resources::check_required(required, available, None)?;
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let stage = Stage::open(
+        &dir.join(&gguf.file),
+        spec.start,
+        spec.end,
+        &Options {
+            gpu,
+            context: CONTEXT_LIMIT,
+            threads,
+        },
+    )?;
+    ensure!(
+        stage.architecture() == "qwen2"
+            && stage.layers() == 24
+            && stage.hidden_size() == 896
+            && stage.vocab_size() == 151936,
+        "GGUF does not match the pinned Qwen2.5-0.5B architecture"
+    );
+    ensure!(
+        stage.precision() == gguf.precision,
+        "GGUF precision {} differs from gguf.json ({})",
+        stage.precision(),
+        gguf.precision
+    );
+    Ok((Engine::LlamaCpp(stage), gguf.precision, memory))
+}
+
+#[cfg(not(feature = "llamacpp"))]
+fn open_llamacpp(
+    _: &Path,
+    _: &ShardSpec,
+    _: &str,
+    _: &str,
+    _: Option<&str>,
+) -> Result<(Engine, String, crate::resources::Memory)> {
+    anyhow::bail!("rebuild with --features llamacpp (or llamacpp-metal, -cuda, -vulkan, -hip)")
 }
 
 async fn info(State(state): State<Worker>) -> Json<Info> {
@@ -287,7 +387,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
                 Err(error) => {
                     resident.model.clear();
                     resident.session = None;
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;

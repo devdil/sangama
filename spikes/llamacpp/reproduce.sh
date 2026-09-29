@@ -16,7 +16,7 @@ if [ ! -d "$work/llama.cpp" ]; then
         "https://codeload.github.com/unslothai/llama.cpp/tar.gz/$sha"
     mkdir "$work/llama.cpp"
     tar -xzf "$work/llama.tgz" -C "$work/llama.cpp" --strip-components=1
-    patch -d "$work/llama.cpp" -p1 < "$spike/qwen2-layer-split.patch"
+    patch -d "$work/llama.cpp" -p1 < "$root/crates/llama-stage/patches/qwen2-layer-split.patch"
 fi
 
 if [ ! -x "$work/venv/bin/cmake" ]; then

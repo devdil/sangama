@@ -214,6 +214,7 @@ mod tests {
                     tensor_count: 1,
                 },
                 device: "cpu".into(),
+                engine: "candle".into(),
                 precision: "f32".into(),
                 pid: 1,
                 busy: false,

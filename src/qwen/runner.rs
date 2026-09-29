@@ -444,11 +444,21 @@ async fn execute_chat(
                 && info.shard.sha256 == manifest.shards[index].sha256
                 && info.shard.start == manifest.shards[index].start
                 && info.shard.end == manifest.shards[index].end
-                // Activations cross the wire as F32 values, so CPU, Metal and CUDA
-                // workers may share a route.
+                // Activations cross the wire as F32 values, so workers may use any
+                // supported device and either engine.
                 && super::DEVICES.contains(&info.device.as_str())
-                && info.precision == "f32",
+                && super::engine::ENGINES.contains(&info.engine.as_str())
+                && !info.precision.is_empty(),
             "peer model/shard/device mismatch"
+        );
+        // Mixing weight precisions would silently change the model's output.
+        ensure!(
+            infos
+                .first()
+                .is_none_or(|first: &Info| first.precision == info.precision),
+            "route mixes weight precisions ({} and {})",
+            infos[0].precision,
+            info.precision
         );
         infos.push(info);
     }

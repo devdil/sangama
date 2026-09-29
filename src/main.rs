@@ -175,6 +175,12 @@ enum Command {
         shard: usize,
         #[arg(long, default_value = "cpu", value_parser = sangama::qwen::DEVICES)]
         device: String,
+        /// candle runs the F32 checkpoint; llamacpp runs an approved GGUF (see --gguf).
+        #[arg(long, default_value = "candle", value_parser = sangama::qwen::engine::ENGINES)]
+        engine: String,
+        /// GGUF file name in the model directory, listed in its gguf.json.
+        #[arg(long)]
+        gguf: Option<String>,
         #[arg(long, default_value = "127.0.0.1:7901")]
         listen: SocketAddr,
         /// Explicit permitted downstream loopback/tunnel endpoints.
@@ -447,6 +453,8 @@ async fn main() -> Result<()> {
             model_dir,
             shard,
             device,
+            engine,
+            gguf,
             listen,
             allow_next,
         } => {
@@ -454,6 +462,10 @@ async fn main() -> Result<()> {
                 &model_dir,
                 shard,
                 &device,
+                sangama::qwen::network::EngineChoice {
+                    name: &engine,
+                    gguf: gguf.as_deref(),
+                },
                 listen,
                 token(cli.token)?,
                 allow_next,
@@ -554,7 +566,7 @@ async fn main() -> Result<()> {
                     "os": std::env::consts::OS, "architecture": std::env::consts::ARCH,
                     "logical_cpus": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
                     "physical_memory_bytes": memory,
-                    "backends": ["CPU numerical fixture", "Candle Qwen2.5"], "metal_compiled": cfg!(feature = "metal"), "cuda_compiled": cfg!(feature = "cuda"),
+                    "backends": ["CPU numerical fixture", "Candle Qwen2.5"], "metal_compiled": cfg!(feature = "metal"), "cuda_compiled": cfg!(feature = "cuda"), "llamacpp_compiled": cfg!(feature = "llamacpp"),
                     "model_download_required": "Qwen: yes; numerical fixture: no",
                     "next_step": "Run demo, or fetch the pinned Qwen checkpoint and run qwen-test"
                 }),
