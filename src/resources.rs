@@ -104,40 +104,45 @@ pub fn available() -> Option<u64> {
         None
     }
 }
-/// Memory available to a worker on `device`: free GPU memory for CUDA, host memory
-/// otherwise (Metal uses unified memory, so host memory is the right measure there).
+/// Memory available to a worker on `device`. CUDA reports the free memory of the GPU,
+/// MIG slice or MPS partition the worker will use. Metal shares host memory but caps a
+/// process at its recommended working set, so a Metal budget is bounded by both.
 pub fn available_for(device: &str) -> Option<u64> {
-    if device == "cuda" {
-        cuda_available()
-    } else {
-        available()
+    match device {
+        "cuda" => cuda_available(),
+        "metal" => {
+            let gpu = metal_available()?;
+            Some(available().map_or(gpu, |host| host.min(gpu)))
+        }
+        _ => available(),
     }
 }
+#[cfg(feature = "cuda")]
 fn cuda_available() -> Option<u64> {
-    // nvidia-smi ignores CUDA_VISIBLE_DEVICES, so query the GPU the worker will use.
-    let gpu = std::env::var("CUDA_VISIBLE_DEVICES")
-        .ok()
-        .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "0".into());
-    let output = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.free",
-            "--format=csv,noheader,nounits",
-            "-i",
-            &gpu,
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_nvidia_smi_free(&String::from_utf8(output.stdout).ok()?)
+    // Ordinal 0 is the first CUDA_VISIBLE_DEVICES entry, which may be a MIG slice.
+    let context = candle::cuda_backend::cudarc::driver::CudaContext::new(0).ok()?;
+    let (free, _total) = context.mem_get_info().ok()?;
+    Some(free as u64)
 }
-fn parse_nvidia_smi_free(text: &str) -> Option<u64> {
-    // One line per queried GPU, in MiB.
-    let mib = text.lines().next()?.trim().parse::<u64>().ok()?;
-    Some(mib.saturating_mul(1024 * 1024))
+#[cfg(not(feature = "cuda"))]
+fn cuda_available() -> Option<u64> {
+    None
+}
+#[cfg(feature = "metal")]
+fn metal_available() -> Option<u64> {
+    let candle::Device::Metal(device) = candle::Device::new_metal(0).ok()? else {
+        return None;
+    };
+    let device = device.metal_device();
+    Some(
+        device
+            .recommended_max_working_set_size()
+            .saturating_sub(device.current_allocated_size()) as u64,
+    )
+}
+#[cfg(not(feature = "metal"))]
+fn metal_available() -> Option<u64> {
+    None
 }
 pub fn estimate(file_bytes: u64, layers: usize) -> u64 {
     // Pinned BF16 checkpoint is expanded to F32. KV: K+V, 4096 positions,
@@ -176,22 +181,21 @@ mod tests {
     #[test]
     fn measures_native_available_memory() {
         assert!(super::available().is_some_and(|bytes| bytes > 0));
-        assert_eq!(
-            super::available_for("metal").is_some(),
-            super::available().is_some()
-        );
+        assert!(super::available_for("cpu").is_some_and(|bytes| bytes > 0));
     }
+    #[cfg(not(feature = "cuda"))]
     #[test]
-    fn parses_nvidia_smi_free_memory() {
-        assert_eq!(
-            super::parse_nvidia_smi_free("80533\n"),
-            Some(80533 * 1024 * 1024)
-        );
-        assert_eq!(
-            super::parse_nvidia_smi_free(" 1024 \n2048\n"),
-            Some(1024 * 1024 * 1024)
-        );
-        assert_eq!(super::parse_nvidia_smi_free("[N/A]\n"), None);
-        assert_eq!(super::parse_nvidia_smi_free(""), None);
+    fn cuda_memory_needs_cuda_build() {
+        assert_eq!(super::available_for("cuda"), None);
+    }
+    #[cfg(feature = "metal")]
+    #[test]
+    fn metal_budget_is_bounded_by_working_set() {
+        let candle::Device::Metal(device) = candle::Device::new_metal(0).unwrap() else {
+            unreachable!()
+        };
+        let working_set = device.metal_device().recommended_max_working_set_size() as u64;
+        let budget = super::available_for("metal").unwrap();
+        assert!(budget > 0 && budget <= working_set);
     }
 }

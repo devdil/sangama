@@ -102,7 +102,7 @@ python3 scripts/fetch-qwen.py
   --max-tokens 40
 ```
 
-To use a GPU, build with `--features metal` and run with `--device metal` on an Apple Silicon Mac, or build with `--features cuda` and run with `--device cuda` on a Linux machine with an NVIDIA GPU. The CUDA build needs the NVIDIA driver and the CUDA toolkit (`nvcc` on `PATH`); set `CUDA_VISIBLE_DEVICES` to choose a GPU.
+To use a GPU, build with `--features metal` and run with `--device metal` on an Apple Silicon Mac, or build with `--features cuda` and run with `--device cuda` on a Linux machine with an NVIDIA GPU. The CUDA build needs the NVIDIA driver and the CUDA toolkit (`nvcc` on `PATH`); set `CUDA_VISIBLE_DEVICES` to choose a GPU. See [GPU testing](docs/gpu-testing.md) for running workers on separate GPUs or MIG slices.
 
 To open the local UI with the CPU build:
 
@@ -140,6 +140,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |
 | [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
+| [GPU testing](docs/gpu-testing.md) | GPU slices (MIG) in containers, and why Mac containers cannot use Metal |
 | [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
 | [Portal accounts](docs/portal-accounts.md) | Invite-only signup and sign-in |
 | [Credits](docs/credits.md) | How contribution is counted, matched and enforced |

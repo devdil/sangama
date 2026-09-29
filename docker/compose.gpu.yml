@@ -1,0 +1,49 @@
+# Two CUDA workers, each confined to its own GPU or MIG slice, plus a client that generates
+# through them. Workers accept only loopback connections, so every service shares the host
+# network; this tests GPU isolation, not network isolation (see docs/gpu-testing.md).
+#
+#   SANGAMA_GPU0 / SANGAMA_GPU1: a GPU index (0), GPU UUID, or MIG device (0:1 or MIG-<uuid>)
+#   SANGAMA_UID: host user that owns the token file, e.g. $(id -u)
+x-worker: &worker
+  image: sangama:cuda
+  network_mode: host
+  user: "${SANGAMA_UID:-10001}"
+  volumes:
+    - ../.models/qwen2.5-0.5b-instruct:/model:ro
+    - ../.secrets/gpu-test.token:/credentials/token:ro
+
+services:
+  worker0:
+    <<: *worker
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cuda
+      args:
+        CUDA_COMPUTE_CAP: ${CUDA_COMPUTE_CAP:?set CUDA_COMPUTE_CAP, e.g. 90}
+    command: [--token-file, /credentials/token, qwen-worker, --device, cuda, --model-dir, /model,
+              --shard, "0", --listen, "127.0.0.1:7901", --allow-next, "127.0.0.1:7902"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SANGAMA_GPU0:-0}"]
+              capabilities: [gpu]
+
+  worker1:
+    <<: *worker
+    command: [--token-file, /credentials/token, qwen-worker, --device, cuda, --model-dir, /model,
+              --shard, "1", --listen, "127.0.0.1:7902"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${SANGAMA_GPU1:-1}"]
+              capabilities: [gpu]
+
+  client:
+    <<: *worker
+    profiles: [client]
+    command: [--token-file, /credentials/token, generate, --device, cuda, --model-dir, /model,
+              --peers, "127.0.0.1:7901,127.0.0.1:7902", --max-tokens, "40"]

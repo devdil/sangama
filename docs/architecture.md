@@ -28,7 +28,7 @@ There are two UIs: the local inference/discovery UI in `src/ui.rs` and the separ
 
 ## Model and files
 
-The supported checkpoint is Qwen2.5-0.5B-Instruct revision `7ae557604adf67be50417f59c2c2f167def9a775`: 24 layers, width 896, 14 attention heads, two KV heads and tied input/output embeddings. Candle 0.11.0 executes F32 on CPU, Metal or CUDA. Activations cross the wire as F32 values and each worker loads them onto its own device, so one route may mix CPU, Metal and CUDA workers. A CUDA worker measures its memory budget from free GPU memory reported by `nvidia-smi`; CPU and Metal workers use host memory.
+The supported checkpoint is Qwen2.5-0.5B-Instruct revision `7ae557604adf67be50417f59c2c2f167def9a775`: 24 layers, width 896, 14 attention heads, two KV heads and tied input/output embeddings. Candle 0.11.0 executes F32 on CPU, Metal or CUDA. Activations cross the wire as F32 values and each worker loads them onto its own device, so one route may mix CPU, Metal and CUDA workers. A CUDA worker's memory budget is the free memory of its GPU or MIG slice (`cuMemGetInfo`); a Metal worker's is bounded by both host memory and Metal's per-process working set. See [GPU testing](gpu-testing.md).
 
 `scripts/fetch-qwen.py` verifies the pinned download and partitions tensor data into physical safetensors files. The manifest names each shard, hash and exclusive layer range. It is not a generic model converter. Each worker reads only its assigned shard plus configuration/manifest. A client needs configuration, manifest and tokenizer. Optional `qwen-test` additionally requires the full checkpoint for an independent Candle baseline.
 

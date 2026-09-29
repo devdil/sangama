@@ -77,11 +77,13 @@ pub async fn serve(
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("shard index not in manifest"))?
         .clone();
+    // Create the device first: it reports a missing build feature clearly, and a CUDA
+    // context's own memory is then excluded from the measured budget.
+    let device = device(backend)?;
     let memory = crate::resources::check(spec.file_bytes, spec.end - spec.start, None, backend)?;
     let file = dir.join(&spec.file);
     check_hash(&file, &spec.sha256)?;
     let cfg = config(dir)?;
-    let device = device(backend)?;
     let model = ShardedModel::new(&cfg, weights(&file, &device)?, spec.start, spec.end)?;
     let state = Worker {
         resident: Arc::new(Mutex::new(Resident {

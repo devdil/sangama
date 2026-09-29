@@ -1,7 +1,7 @@
 # Docker isolation tests
 
 Docker Desktop/Engine must be running. On Apple Silicon this builds native Linux ARM64 and uses CPU inference;
-Metal is not available to Linux containers. These tests establish process, filesystem, and network separation,
+Metal is not available to Linux containers ([why](gpu-testing.md#apple-silicon-no-gpu-in-containers); for CUDA workers in containers see [GPU testing](gpu-testing.md)). These tests establish process, filesystem, and network separation,
 not multi-computer GPU scaling or Internet latency.
 
 ## Build once
