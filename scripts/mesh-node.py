@@ -9,7 +9,7 @@ def main():
     p.add_argument('--binary',type=Path,default=ROOT/'target/release/sangama')
     p.add_argument('--model-dir',type=Path,default=ROOT/'.models/qwen2.5-0.5b-instruct')
     p.add_argument('--shard',type=int)
-    p.add_argument('--device',choices=['cpu','metal'],default='metal')
+    p.add_argument('--device',choices=['cpu','metal','cuda'],default='metal')
     p.add_argument('--chat',action='store_true')
     p.add_argument('--api-token-file',type=Path)
     a=p.parse_args();config=json.loads(a.config.read_text());children=[]

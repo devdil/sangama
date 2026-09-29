@@ -33,6 +33,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 [features]
 default = []
 metal = ["candle/metal", "candle-nn/metal", "candle-transformers/metal"]
+cuda = ["candle/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 
 [profile.release]
 lto = "thin"

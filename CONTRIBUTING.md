@@ -14,7 +14,7 @@ There are three related but separate systems: real Qwen inference, the admitted 
 
 ## Local development
 
-Run commands from the repository root. Install stable Rust/Cargo, Python 3 and curl. Native compilation requires your platform's compiler/linker tools (Xcode Command Line Tools on macOS). Metal builds require an Apple environment with the Metal toolchain available; Linux uses CPU. Docker is optional until you run container tests. PostgreSQL is needed for the portal, not for basic local inference or Rust tests.
+Run commands from the repository root. Install stable Rust/Cargo, Python 3 and curl. Native compilation requires your platform's compiler/linker tools (Xcode Command Line Tools on macOS). Metal builds require an Apple environment with the Metal toolchain available. CUDA builds require Linux with an NVIDIA driver and the CUDA toolkit (`nvcc` on `PATH`); otherwise Linux uses CPU. Docker is optional until you run container tests. PostgreSQL is needed for the portal, not for basic local inference or Rust tests.
 
 `scripts/cargo` uses the repository's isolated toolchain if present, otherwise your installed Cargo. The root, `portal/`, and `crates/network-auth/` have separate Cargo manifests; they are not one Cargo workspace, so check all affected packages explicitly.
 
@@ -39,7 +39,7 @@ python3 scripts/fetch-qwen.py
   --max-tokens 40 --output runs/first-generation.json
 ```
 
-On an Apple Silicon Mac, build with `--features metal` and use `--device metal` instead. Use release builds for inference measurements. The downloader verifies the pinned checkpoint and creates physical shard files; allow about 2.25 GB of disk space for the checkpoint plus shards, and additional runtime RAM. Without `--peers`, generation launches local workers and cleans them up afterward. This is two processes on one machine, not a WAN benchmark.
+On an Apple Silicon Mac, build with `--features metal` and use `--device metal` instead; on an NVIDIA machine, use `--features cuda` and `--device cuda`. Use release builds for inference measurements. The downloader verifies the pinned checkpoint and creates physical shard files; allow about 2.25 GB of disk space for the checkpoint plus shards, and additional runtime RAM. Without `--peers`, generation launches local workers and cleans them up afterward. This is two processes on one machine, not a WAN benchmark.
 
 For independent numerical validation, run `qwen-test` with the same device and prompt. It requires the complete checkpoint and compares distributed tokens/logits against upstream Candle. See [generation](docs/generation.md) for role-specific file requirements.
 
@@ -71,7 +71,7 @@ Good first changes include improving an error message with actionable context, a
 ./scripts/cargo test --locked --manifest-path portal/Cargo.toml
 ```
 
-For Metal changes, add `--features metal` to the root clippy/test commands. For changes in the separate packages, also run fmt/clippy with their `--manifest-path`. Real checkpoints are not downloaded by ordinary Rust tests. Follow [the Docker simulation instructions](docs/admitted-mesh.md#reproduce-the-simulation) for networking, membership, placement or recovery changes; prepare the model first. The current full simulation uses a Linux ARM64 OpenCode binary, so do not assume it runs unchanged on every Docker architecture.
+For Metal or CUDA changes, add `--features metal` or `--features cuda` to the root clippy/test commands. The CUDA build cannot be checked on a Mac or on GitHub's hosted runners, so record the GPU, driver and CUDA versions you tested on. For changes in the separate packages, also run fmt/clippy with their `--manifest-path`. Real checkpoints are not downloaded by ordinary Rust tests. Follow [the Docker simulation instructions](docs/admitted-mesh.md#reproduce-the-simulation) for networking, membership, placement or recovery changes; prepare the model first. The current full simulation uses a Linux ARM64 OpenCode binary, so do not assume it runs unchanged on every Docker architecture.
 
 Record what passed, the backend/hardware, and any untested paths. Do not turn a local single-run speed result into a WAN performance claim. A useful change description states the triggering problem, new behavior, validation and remaining limitations. Keep unrelated refactors separate. Update docs when changing configuration or the wire protocol; mixed old/new workers are not supported.
 

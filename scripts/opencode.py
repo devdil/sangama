@@ -60,7 +60,7 @@ def main():
     parser=argparse.ArgumentParser(prog="sangama-code", description=__doc__)
     parser.add_argument('--model-dir', type=Path, default=defaults.get('model_dir', ROOT/'.models/qwen2.5-0.5b-instruct'))
     parser.add_argument('--project', type=Path, default=Path.cwd())
-    parser.add_argument('--device',choices=['metal','cpu'],default=defaults.get('device', 'metal' if platform.system() == 'Darwin' and platform.machine() == 'arm64' else 'cpu'))
+    parser.add_argument('--device',choices=['metal','cuda','cpu'],default=defaults.get('device', 'metal' if platform.system() == 'Darwin' and platform.machine() == 'arm64' else 'cpu'))
     parser.add_argument('--peers',help='Existing worker endpoints in shard order (admitted mesh bridges or SSH tunnels for remote peers)')
     parser.add_argument('--worker-token-file',type=Path)
     parser.add_argument('--serve-only',action='store_true',help='Keep gateway/workers alive for API tests')

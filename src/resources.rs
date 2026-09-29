@@ -1,4 +1,4 @@
-//! Conservative host/cgroup memory observation for the supported F32 Qwen worker.
+//! Conservative host/cgroup and GPU memory observation for the supported F32 Qwen worker.
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Memory {
@@ -104,14 +104,54 @@ pub fn available() -> Option<u64> {
         None
     }
 }
+/// Memory available to a worker on `device`: free GPU memory for CUDA, host memory
+/// otherwise (Metal uses unified memory, so host memory is the right measure there).
+pub fn available_for(device: &str) -> Option<u64> {
+    if device == "cuda" {
+        cuda_available()
+    } else {
+        available()
+    }
+}
+fn cuda_available() -> Option<u64> {
+    // nvidia-smi ignores CUDA_VISIBLE_DEVICES, so query the GPU the worker will use.
+    let gpu = std::env::var("CUDA_VISIBLE_DEVICES")
+        .ok()
+        .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "0".into());
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=memory.free",
+            "--format=csv,noheader,nounits",
+            "-i",
+            &gpu,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_nvidia_smi_free(&String::from_utf8(output.stdout).ok()?)
+}
+fn parse_nvidia_smi_free(text: &str) -> Option<u64> {
+    // One line per queried GPU, in MiB.
+    let mib = text.lines().next()?.trim().parse::<u64>().ok()?;
+    Some(mib.saturating_mul(1024 * 1024))
+}
 pub fn estimate(file_bytes: u64, layers: usize) -> u64 {
     // Pinned BF16 checkpoint is expanded to F32. KV: K+V, 4096 positions,
     // two KV heads, head dimension 64, four bytes; allow 384 MiB workspace.
     file_bytes.saturating_mul(2) + (layers as u64) * 2 * 4096 * 2 * 64 * 4 + 384 * 1024 * 1024
 }
-pub fn check(file_bytes: u64, layers: usize, budget_mib: Option<u64>) -> anyhow::Result<Memory> {
-    let available = available()
-        .ok_or_else(|| anyhow::anyhow!("cannot measure available memory on this host"))?;
+pub fn check(
+    file_bytes: u64,
+    layers: usize,
+    budget_mib: Option<u64>,
+    device: &str,
+) -> anyhow::Result<Memory> {
+    let available = available_for(device)
+        .ok_or_else(|| anyhow::anyhow!("cannot measure available {device} memory on this host"))?;
     let budget = budget_mib
         .map(|m| m.saturating_mul(1024 * 1024))
         .unwrap_or(available / 5 * 4)
@@ -130,13 +170,28 @@ pub fn check(file_bytes: u64, layers: usize, budget_mib: Option<u64>) -> anyhow:
     })
 }
 
-#[cfg(all(
-    test,
-    any(target_os = "linux", target_os = "macos", target_os = "windows")
-))]
+#[cfg(test)]
 mod tests {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn measures_native_available_memory() {
         assert!(super::available().is_some_and(|bytes| bytes > 0));
+        assert_eq!(
+            super::available_for("metal").is_some(),
+            super::available().is_some()
+        );
+    }
+    #[test]
+    fn parses_nvidia_smi_free_memory() {
+        assert_eq!(
+            super::parse_nvidia_smi_free("80533\n"),
+            Some(80533 * 1024 * 1024)
+        );
+        assert_eq!(
+            super::parse_nvidia_smi_free(" 1024 \n2048\n"),
+            Some(1024 * 1024 * 1024)
+        );
+        assert_eq!(super::parse_nvidia_smi_free("[N/A]\n"), None);
+        assert_eq!(super::parse_nvidia_smi_free(""), None);
     }
 }

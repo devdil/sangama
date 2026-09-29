@@ -103,7 +103,7 @@ The peer only needs `config.json`, `manifest.json`, `LICENSE`, and `shard-1-of-2
 They can run the downloader to derive matching files independently, then remove the unneeded original/shard-0 files.
 Your validation client needs the complete model and tokenizer for the baseline. Downloaded files are hash checked.
 On a CPU-only machine omit `--features metal`; for this initial test select `--device cpu` on both workers and client.
-Mixed CPU/Metal validation is currently rejected. Native Windows has not been verified; macOS/Linux are the documented targets.
+Workers in one route may use different backends (CPU, Metal or CUDA). Native Windows has not been verified; macOS/Linux are the documented targets.
 
 Create the shared application token once on your Mac:
 

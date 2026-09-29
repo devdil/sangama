@@ -21,7 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', default='target/release/sangama')
     parser.add_argument('--model-dir', default='.models/qwen2.5-0.5b-instruct')
-    parser.add_argument('--device', choices=['cpu', 'metal'], default='metal')
+    parser.add_argument('--device', choices=['cpu', 'metal', 'cuda'], default='metal')
     parser.add_argument('--output', default='runs/standalone-generation-test.json')
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())

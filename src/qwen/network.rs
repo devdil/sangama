@@ -77,7 +77,7 @@ pub async fn serve(
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("shard index not in manifest"))?
         .clone();
-    let memory = crate::resources::check(spec.file_bytes, spec.end - spec.start, None)?;
+    let memory = crate::resources::check(spec.file_bytes, spec.end - spec.start, None, backend)?;
     let file = dir.join(&spec.file);
     check_hash(&file, &spec.sha256)?;
     let cfg = config(dir)?;

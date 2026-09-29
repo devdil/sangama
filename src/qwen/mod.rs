@@ -19,6 +19,8 @@ pub const WEIGHTS_SHA256: &str = "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49
 /// Decoder layers in the supported checkpoint.
 pub const LAYERS: usize = 24;
 pub const CONTEXT_LIMIT: usize = 4096;
+/// Execution backends a worker may use. Workers in one route may use different backends.
+pub const DEVICES: [&str; 3] = ["cpu", "metal", "cuda"];
 /// Largest completion one request may ask for; prompt plus output must still fit CONTEXT_LIMIT.
 pub const OUTPUT_LIMIT: usize = 512;
 
@@ -137,7 +139,18 @@ pub fn device(name: &str) -> Result<Device> {
                 anyhow::bail!("rebuild with --features metal to use your Mac GPU")
             }
         }
-        _ => anyhow::bail!("device must be cpu or metal"),
+        "cuda" => {
+            #[cfg(feature = "cuda")]
+            {
+                // CUDA_VISIBLE_DEVICES selects the GPU; the worker uses the first visible one.
+                Ok(Device::new_cuda(0).context("initialize CUDA")?)
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                anyhow::bail!("rebuild with --features cuda to use an NVIDIA GPU")
+            }
+        }
+        _ => anyhow::bail!("device must be cpu, metal or cuda"),
     }
 }
 

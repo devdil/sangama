@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--home', type=Path, default=Path.home()/'.local/share/sangama-code')
     parser.add_argument('--bin-dir', type=Path, default=Path.home()/'.local/bin')
     parser.add_argument('--model-dir', type=Path, default=ROOT/'.models/qwen2.5-0.5b-instruct')
-    parser.add_argument('--device', choices=['metal', 'cpu'], default='metal' if platform.system() == 'Darwin' and platform.machine() == 'arm64' else 'cpu')
+    parser.add_argument('--device', choices=['metal', 'cuda', 'cpu'], default='metal' if platform.system() == 'Darwin' and platform.machine() == 'arm64' else 'cpu')
     args = parser.parse_args()
     if os.name == 'nt':
         parser.error('This installer currently supports macOS/Linux; Windows CLI installation is not yet supported.')
