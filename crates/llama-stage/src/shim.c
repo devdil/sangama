@@ -157,14 +157,23 @@ int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, 
         snprintf(err, err_len, "stage input mismatch: %s expected", takes_tokens ? "tokens" : "hidden states");
         return -1;
     }
-    struct llama_batch batch = llama_batch_init(n, takes_tokens ? 0 : s->n_embd, 1);
+    // M-RoPE models (Qwen3.5) read n_pos_per_embd position sections per token when the batch
+    // carries hidden states; supply the same text position in every section, or llama.cpp
+    // reads uninitialised positions and the stage's output silently changes run to run.
+    const enum llama_rope_type rope = llama_model_rope_type(s->model);
+    const int sections = (!takes_tokens && (rope == LLAMA_ROPE_TYPE_MROPE || rope == LLAMA_ROPE_TYPE_IMROPE)) ? 4 : 1;
+    struct llama_batch batch = llama_batch_init(n * sections, takes_tokens ? 0 : s->n_embd, 1);
     if (takes_tokens) {
         memcpy(batch.token, tokens, (size_t) n * sizeof(int32_t));
     } else {
         memcpy(batch.embd, hidden, (size_t) n * (size_t) s->n_embd * sizeof(float));
     }
+    for (int j = 0; j < sections; ++j) {
+        for (int i = 0; i < n; ++i) {
+            batch.pos[j * n + i] = pos + i;
+        }
+    }
     for (int i = 0; i < n; ++i) {
-        batch.pos[i] = pos + i;
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;
         batch.logits[i] = last ? (i == n - 1) : 1;

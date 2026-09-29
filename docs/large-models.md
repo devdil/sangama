@@ -74,6 +74,6 @@ Published measurements for comparison:
 4. **Concurrent conversations per worker.** Workers currently serve one conversation at a time.
 5. **Failure recovery.** Today a disconnect fails the request. [Petals](https://arxiv.org/pdf/2312.08361) keeps the inputs sent to each stage on the client and replays them to a replacement server.
 6. **Speculative decoding.** A draft predicts several tokens and the route verifies them in one pass. Qwen's multi-token-prediction heads can serve as the draft. [Reported speedups](https://arxiv.org/html/2511.11733) are 2.3–2.6×, though measured with simulated WAN latency.
-7. **Partial downloads.** Each peer should download only its own 20–95 GB slice.
+7. **Partial downloads.** Each peer should download only its own 20–95 GB slice. `scripts/split-gguf.py` now splits a GGUF into per-layer slices with a checksummed manifest; Qwen3.5-397B Q4_K_M was split into 62 slices and verified bit-exact against the original ([model slices](model-slices.md)).
 
 **Suggested milestone:** run Qwen3.5-397B at 3-bit on 2–3 Macs in one city, then repeat across two home networks and record time to first token and decode tokens/s.
