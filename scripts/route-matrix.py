@@ -122,13 +122,14 @@ def main():
     parser.add_argument('--load-timeout', type=float, default=240)
     parser.add_argument('--generate-timeout', type=float, default=300)
     parser.add_argument('--output', type=Path, help='append results as JSON lines')
+    parser.add_argument('--environment', default='unspecified', help='environment id from the scenario matrix, e.g. E2')
     args = parser.parse_args()
     token = Path(args.token_file).read_text().strip()
     only = set(args.only.split(',')) if args.only else None
     for scenario in json.loads(args.scenarios.read_text()):
         if only and scenario['id'] not in only:
             continue
-        result = {'id': scenario['id'], 'name': scenario['name'], 'host': os.uname().nodename,
+        result = {'id': scenario['id'], 'name': scenario['name'], 'environment': args.environment,
                   'time': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), **run(scenario, args, token)}
         print(json.dumps(result), flush=True)
         if args.output:
