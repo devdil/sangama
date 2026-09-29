@@ -34,7 +34,7 @@ th { background: #eee; }
 
 <p>Sangama is an open-source program, written in Rust, that splits a language model's layers across several computers: Macs, GPUs and ordinary CPUs. A model too large for any one device can then run across several, with encrypted, invitation-only connections between them.</p>
 
-<p><b>Status:</b> experimental. It runs on an invite-only network of trusted computers, and is tested with a small model (Qwen2.5-0.5B-Instruct). It is released under the MIT License.</p>
+<p><b>Status:</b> experimental. It runs on an invite-only network of trusted computers. It has run Qwen3.5-397B across 20 GPUs with 16 GB each (<a href="/results/qwen35-397b.html">results</a>), and is tested in depth with a small model (Qwen2.5-0.5B-Instruct). It is released under the MIT License.</p>
 
 <hr>
 
@@ -101,6 +101,8 @@ th { background: #eee; }
 
 <h2 id="results">Results</h2>
 
+<p><b>New: <a href="/results/qwen35-397b.html">Qwen3.5-397B on 20 GPUs, through a relay</a>.</b> The 397-billion-parameter model ran split across 20 rented GPUs with 16 GB each, every connection through a relay, at 1.8-2.6 tokens per second with identical output on every run. The GPUs did 21 ms of work per token; the network set the pace.</p>
+
 <p>Measured on 29 September 2026 with the Qwen2.5-0.5B-Instruct test model, split across two workers. The full list of test scenarios and raw results is <a href="https://github.com/devdil/sangama/tree/main/docs/test-results">in the repository</a>.</p>
 
 <ul>
@@ -149,8 +151,8 @@ th { background: #eee; }
 
 <h2 id="roadmap">Roadmap</h2>
 <ul>
-<li><b>Large open models.</b> Qwen3.5-397B is the first target: about 3 to 5 well-placed computers per copy, with 4-bit weights.</li>
-<li><b>Published weights.</b> Compress the model once and publish it in slices with checksums, so each worker downloads only the layers it serves.</li>
+<li><b>Large open models.</b> Qwen3.5-397B runs across 20 computers with 16 GB each (<a href="/results/qwen35-397b.html">results</a>). Next: make it faster with speculative decoding and nearby relays.</li>
+<li><b>Published weights.</b> Done: the model is published in per-layer slices with checksums, so each worker downloads only the layers it serves.</li>
 <li><b>More hardware.</b> Test runs on AMD, Intel, Qualcomm and Windows, then phones.</li>
 <li><b>Nearby routes.</b> Keep each route within one city or region, since network distance sets the speed.</li>
 <li><b>Two home networks.</b> The next acceptance test: two home routers, a relay, and direct connections through NAT.</li>
