@@ -70,6 +70,12 @@ struct Resident {
     model: Engine,
     session: Option<Session>,
 }
+/// A detached frame waiting to be passed to the next stage.
+struct Outgoing {
+    next: SocketAddr,
+    bytes: Vec<u8>,
+    sent: Header,
+}
 /// A detached result kept by the last stage until the client collects it.
 struct Delivered {
     session: String,
@@ -80,6 +86,9 @@ struct Delivered {
 struct Worker {
     resident: Arc<Mutex<Resident>>,
     results: Arc<tokio::sync::watch::Sender<Option<Arc<Delivered>>>>,
+    /// Detached frames leave in the order this stage computed them, one at a time, so a
+    /// pipelined prompt's chunks cannot overtake each other.
+    outbox: tokio::sync::mpsc::UnboundedSender<Outgoing>,
     info: Info,
     manifest: Manifest,
     token: String,
@@ -156,7 +165,9 @@ pub async fn serve(
         "llamacpp" => open_llamacpp(dir, &manifest, &spec, &hash, backend, &engine)?,
         other => anyhow::bail!("unknown engine {other}"),
     };
+    let (outbox, mut outgoing) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
     let state = Worker {
+        outbox,
         resident: Arc::new(Mutex::new(Resident {
             model,
             session: None,
@@ -179,6 +190,31 @@ pub async fn serve(
         http: server::client()?,
         allow_next,
     };
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            while let Some(Outgoing { next, bytes, sent }) = outgoing.recv().await {
+                let passed: Result<()> = async {
+                    let response = state
+                        .http
+                        .post(url(next, "/v1/qwen/forward"))
+                        .bearer_auth(&state.token)
+                        .header("content-type", "application/octet-stream")
+                        .body(bytes)
+                        .send()
+                        .await?;
+                    let reply = super::wire::response(response).await?;
+                    ensure!(reply.accepts(&sent), "invalid downstream acknowledgement");
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = passed {
+                    tracing::warn!(%error, session = %sent.session, "passing a detached frame on failed");
+                    discard(&state, &sent.session);
+                }
+            }
+        });
+    }
     let (engine_name, precision) = (state.info.engine.clone(), state.info.precision.clone());
     let app = Router::new()
         .route("/v1/qwen/info", get(info))
@@ -428,6 +464,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
     };
     let worker = state.clone();
     let session_id = frame.header.session.clone();
+    let (position, seq_len) = (frame.header.position, frame.header.seq_len);
     let calculation = tokio::task::spawn_blocking(move || -> Result<Frame> {
         let mut resident = worker
             .resident
@@ -451,6 +488,9 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
             ensure!(h.position == 0, "new session must begin at position zero");
         }
         let started = Instant::now();
+        let started_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
         let mut values =
             match resident
                 .model
@@ -483,6 +523,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
             start: worker.info.shard.start,
             end: worker.info.shard.end,
             forward_ms: elapsed,
+            started_ms,
         });
         header.kind = if header.route.is_empty() {
             Kind::Logits
@@ -542,6 +583,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
     match result.and_then(|frame| frame.encode()) {
         Ok(bytes) => ([("content-type", "application/octet-stream")], bytes).into_response(),
         Err(err) => {
+            tracing::warn!(error = %err, session = %session_id, position, seq_len, "forward failed; session discarded");
             discard(&state, &session_id);
             error(StatusCode::SERVICE_UNAVAILABLE, err)
         }
@@ -558,7 +600,7 @@ fn discard(state: &Worker, session: &str) {
     }
 }
 
-/// Passes a detached frame to the next stage in the background, or keeps it at the last stage
+/// Queues a detached frame for the next stage, or keeps it at the last stage
 /// for the client, and returns this stage's acknowledgement.
 fn detach(state: &Worker, frame: Frame) -> Result<Frame> {
     let bytes = frame.encode()?;
@@ -572,27 +614,11 @@ fn detach(state: &Worker, frame: Frame) -> Result<Frame> {
     let sent = frame.header;
     match sent.route.first() {
         Some(next) => {
-            let (state, next) = (state.clone(), next.address);
-            tokio::spawn(async move {
-                let passed: Result<()> = async {
-                    let response = state
-                        .http
-                        .post(url(next, "/v1/qwen/forward"))
-                        .bearer_auth(&state.token)
-                        .header("content-type", "application/octet-stream")
-                        .body(bytes)
-                        .send()
-                        .await?;
-                    let reply = super::wire::response(response).await?;
-                    ensure!(reply.accepts(&sent), "invalid downstream acknowledgement");
-                    Ok(())
-                }
-                .await;
-                if let Err(error) = passed {
-                    tracing::warn!(%error, session = %sent.session, "passing a detached frame on failed");
-                    discard(&state, &sent.session);
-                }
-            });
+            let next = next.address;
+            state
+                .outbox
+                .send(Outgoing { next, bytes, sent })
+                .map_err(|_| anyhow::anyhow!("outbox closed"))?;
         }
         None => {
             state.results.send_replace(Some(Arc::new(Delivered {

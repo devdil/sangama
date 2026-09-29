@@ -17,6 +17,10 @@ pub struct Trace {
     pub start: usize,
     pub end: usize,
     pub forward_ms: f64,
+    /// When this stage started computing, in milliseconds since the Unix epoch. Gaps between
+    /// consecutive stages show each hop's network time (clocks synchronised by NTP).
+    #[serde(default)]
+    pub started_ms: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

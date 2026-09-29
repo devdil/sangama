@@ -122,6 +122,9 @@ pub struct Report {
     pub distributed: Timing,
     pub workers: Vec<Info>,
     pub last_trace: Vec<Trace>,
+    /// The first token's trace: the last prompt chunk through every stage.
+    #[serde(default)]
+    pub first_trace: Vec<Trace>,
     /// Where each token's time went: compute per stage vs everything else (network, relay).
     pub breakdown: Breakdown,
     pub notes: Vec<&'static str>,
@@ -406,11 +409,23 @@ fn request(
     }
 }
 
+/// Sends one frame through the route. A detached frame returns the first stage's acknowledgement
+/// unless `collect`, which waits for the last stage's result.
+/// Prompt tokens per pipelined chunk; `SANGAMA_PREFILL_CHUNK` overrides it for measurements.
+fn prefill_chunk() -> usize {
+    std::env::var("SANGAMA_PREFILL_CHUNK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| (1..=512).contains(v))
+        .unwrap_or(64)
+}
+
 async fn step(
     http: &reqwest::Client,
     token: &str,
     frame: &Frame,
     vocab_size: usize,
+    collect: bool,
 ) -> Result<Frame> {
     let response = http
         .post(url(frame.header.route[0].address, "/v1/qwen/forward"))
@@ -422,6 +437,9 @@ async fn step(
     let mut response = super::wire::response(response).await?;
     if frame.header.detached {
         ensure!(response.accepts(&frame.header), "invalid acknowledgement");
+        if !collect {
+            return Ok(response);
+        }
         let tail = frame.header.route.last().context("empty route")?.address;
         let collected = http
             .post(url(tail, "/v1/qwen/result"))
@@ -525,8 +543,14 @@ async fn execute_chat(
     // Hidden-state frames must fit MAX_FRAME_BYTES, so wide models send the prompt in chunks.
     // Generation sends BF16 hidden states (see `request`); verification keeps F32.
     let width = if verify { 4 } else { 2 };
-    let chunk_tokens =
+    let largest =
         ((MAX_FRAME_BYTES - MAX_HEADER_BYTES - 4) / (width * manifest.hidden_size())).clamp(1, 512);
+    // Pipelined generation prefers small chunks, so stages overlap; verification sends whole frames.
+    let chunk_tokens = if verify {
+        largest
+    } else {
+        prefill_chunk().min(largest)
+    };
     let prompt = tokenizer
         .encode(formatted, false)
         .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?
@@ -644,6 +668,7 @@ async fn execute_chat(
                 &options.token,
                 &request(&model_hash, &session, &route, &prompt, 0, false),
                 vocab_size,
+                true,
             )
             .await?;
             reset(&http, &addresses, &options.token, &session).await?;
@@ -654,6 +679,7 @@ async fn execute_chat(
         let mut position = 0;
         let mut maximum_error = 0.0_f32;
         let mut last_trace = Vec::new();
+        let mut first_trace = None;
         let mut token_stage_ms: Vec<Vec<f64>> = Vec::new();
         let mut finish_reason = "max_tokens";
         let limit = local.as_ref().map_or(options.max_tokens, |b| b.ids.len());
@@ -667,15 +693,19 @@ async fn execute_chat(
             let mut last: Option<Frame> = None;
             // Compute time each stage spent on this token, summed over prompt chunks.
             let mut stage_ms = vec![0.0; route.len()];
-            for chunk in context.chunks(chunk_tokens) {
+            let chunks = context.chunks(chunk_tokens).count();
+            for (n, chunk) in context.chunks(chunk_tokens).enumerate() {
                 if let Some(sender) = &deltas {
                     ensure!(!sender.is_closed(), "client disconnected");
                 }
+                // Detached prompt chunks are pipelined: the next chunk enters the first stage
+                // while earlier ones are still moving down the route. Only the last is collected.
                 let response = step(
                     &http,
                     &options.token,
                     &request(&model_hash, &session, &route, chunk, position, !verify),
                     vocab_size,
+                    n + 1 == chunks,
                 )
                 .await?;
                 for trace in &response.header.trace {
@@ -694,6 +724,9 @@ async fn execute_chat(
                 greedy(&result.values)?
             };
             times.push(now.elapsed().as_secs_f64() * 1000.0);
+            if first_trace.is_none() {
+                first_trace = Some(result.header.trace.clone());
+            }
             last_trace = result.header.trace;
             ids.push(id);
             if let Some(sender) = &deltas
@@ -725,13 +758,15 @@ async fn execute_chat(
             times,
             maximum_error,
             last_trace,
+            first_trace.unwrap_or_default(),
             finish_reason,
             token_stage_ms,
         ))
     }
     .await;
     let cleanup = reset(&http, &addresses, &options.token, &session).await;
-    let (ids, times, maximum_error, trace, finish_reason, token_stage_ms) = measurement?;
+    let (ids, times, maximum_error, trace, first_trace, finish_reason, token_stage_ms) =
+        measurement?;
     let breakdown = Breakdown::new(&times, &token_stage_ms, &trace);
     cleanup?;
     let tokens_match = local.as_ref().map(|local| ids == local.ids);
@@ -777,6 +812,7 @@ async fn execute_chat(
         distributed_token_ids: ids,
         workers: infos,
         last_trace: trace,
+        first_trace,
         breakdown,
         notes: vec![
             if verify {

@@ -120,6 +120,17 @@ struct Proxy {
     meter: Arc<std::sync::Mutex<crate::credits::Meter>>,
     bridges: Arc<HashMap<SocketAddr, PeerId>>,
 }
+/// Every request opens a new substream. Yamux starts each at a 256 KiB window and grows it only
+/// round trip by round trip, so a 4 MiB frame over a long relayed hop was window-bound. Grant
+/// a whole frame's window as soon as a substream opens instead.
+fn multiplexer() -> yamux::Config {
+    let mut config = yamux::Config::default();
+    #[allow(deprecated)]
+    config
+        .set_receive_window_size(2 * LIMIT as u32)
+        .set_max_buffer_size(2 * LIMIT);
+    config
+}
 fn valid_path(path: &str) -> bool {
     [
         "/v1/qwen/info",
@@ -490,10 +501,10 @@ pub async fn run(path: &Path) -> Result<()> {
             crate::mesh_transport::GuardedTcp::new(c.relay.as_ref(), c.force_relay)
                 .upgrade(libp2p::core::upgrade::Version::V1Lazy)
                 .authenticate(transport_noise)
-                .multiplex(yamux::Config::default())
+                .multiplex(multiplexer())
                 .boxed()
         })?
-        .with_relay_client(noise::Config::new, yamux::Config::default)?
+        .with_relay_client(noise::Config::new, multiplexer)?
         .with_behaviour(|key, relay_client| {
             let rc = relay::Config {
                 max_reservations: 64,
@@ -535,10 +546,12 @@ pub async fn run(path: &Path) -> Result<()> {
                 ),
                 relay_client,
                 relay_server: c.relay_server.then(|| relay::Behaviour::new(me, rc)).into(),
-                identify: identify::Behaviour::new(identify::Config::new(
-                    "/sangama/mesh/1".into(),
-                    key.public(),
-                )),
+                // A relay-only node's listen addresses (e.g. 127.0.0.1:9000) are useless to others
+                // and, cached by identify, replaced the circuit address a peer must be dialled at.
+                identify: identify::Behaviour::new(
+                    identify::Config::new("/sangama/mesh/1".into(), key.public())
+                        .with_hide_listen_addrs(c.force_relay),
+                ),
                 dcutr: (!c.force_relay).then(|| dcutr::Behaviour::new(me)).into(),
                 autonat: (!c.force_relay)
                     .then(|| autonat::Behaviour::new(me, Default::default()))
@@ -784,6 +797,13 @@ pub async fn run(path: &Path) -> Result<()> {
                 Command::Standing(s)=>standing=s,
                 Command::Call {peer,request,result}=>{
                     if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || pending.len()>=16 {let _=result.send(Reply::error(403,"Membership unavailable or capacity exceeded"));continue;}
+                    // Dial the relay circuit ourselves: cached addresses can go stale when a peer
+                    // restarts, and a failed dial otherwise never tries the circuit.
+                    if !swarm.is_connected(&peer) && let Some(relay)=&c.relay {
+                        let circuit=relay.clone().with(libp2p::multiaddr::Protocol::P2pCircuit).with(libp2p::multiaddr::Protocol::P2p(peer));
+                        let dial=libp2p::swarm::dial_opts::DialOpts::peer_id(peer).addresses(vec![circuit]).condition(libp2p::swarm::dial_opts::PeerCondition::DisconnectedAndNotDialing);
+                        let _=swarm.dial(if c.force_relay {dial.build()} else {dial.extend_addresses_through_behaviour().build()});
+                    }
                     let id=swarm.behaviour_mut().rpc.send_request(&peer,request);pending.insert(id,(peer,result));
                 },
                 Command::Reply {peer,channel,mut reply}=>{
