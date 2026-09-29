@@ -6,6 +6,6 @@ license = "MIT"
 publish = false
 [dependencies]
 anyhow = "1"
-libp2p-identity = { version = "0.2", features = ["ed25519", "peerid", "rand"] }
+libp2p-identity = { version = "0.3", features = ["ed25519", "peerid", "rand"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
