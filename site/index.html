@@ -3,284 +3,167 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sangama — one AI model across many computers</title>
-<meta name="description" content="Sangama is an open-source Rust network that splits a language model's layers across the computers people already own: Macs, NVIDIA and other GPUs, and CPUs.">
-<meta property="og:title" content="Sangama — one AI model across many computers">
-<meta property="og:description" content="Split a language model's layers across Macs, GPUs and CPUs you already own. Open source, MIT licensed.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://sangama.co/">
+<title>Sangama</title>
+<meta name="description" content="Sangama is an open-source Rust network that splits a language model's layers across the computers people already own: Macs, GPUs and CPUs.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
-:root {
-  --bg: #fbfaf7; --surface: #ffffff; --ink: #1b1d22; --muted: #5b6070; --line: #e4e1da;
-  --accent: #c2410c; --accent-soft: #fdebdc; --ok: #15803d; --ok-soft: #dcfce7; --warn: #a16207; --warn-soft: #fef3c7;
-  --code: #f3f1ec; --shadow: 0 1px 2px rgba(20,20,30,.05), 0 8px 24px rgba(20,20,30,.06);
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111317; --surface: #181b21; --ink: #eceae6; --muted: #a3a8b5; --line: #2a2e37;
-    --accent: #fb923c; --accent-soft: #3a2415; --ok: #4ade80; --ok-soft: #14301f; --warn: #fbbf24; --warn-soft: #3a2f10;
-    --code: #20242c; --shadow: none;
-  }
-}
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body {
-  margin: 0; background: var(--bg); color: var(--ink);
-  font: 17px/1.6 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-a { color: var(--accent); text-underline-offset: 3px; }
-.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
-header.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.01em; color: var(--ink); text-decoration: none; }
-.brand svg { width: 28px; height: 28px; }
-nav a { color: var(--muted); text-decoration: none; margin-left: 20px; font-size: 15px; }
-nav a:hover { color: var(--ink); }
-@media (max-width: 720px) { nav a:not(.cta-link) { display: none; } }
-.hero { padding-top: 88px; padding-bottom: 56px; }
-.eyebrow { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--warn); background: var(--warn-soft); padding: 4px 12px; border-radius: 999px; }
-h1 { font-size: clamp(38px, 6vw, 64px); line-height: 1.05; letter-spacing: -.03em; margin: 20px 0 16px; max-width: 16ch; }
-.lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 60ch; margin: 0 0 28px; }
-.lede b { color: var(--ink); font-weight: 600; }
-.buttons { display: flex; gap: 12px; flex-wrap: wrap; }
-.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 10px; font-weight: 600; font-size: 16px; text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
-.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.btn:hover { transform: translateY(-1px); }
-section { padding: 64px 0; border-top: 1px solid var(--line); }
-h2 { font-size: clamp(28px, 3.6vw, 38px); letter-spacing: -.02em; margin: 0 0 12px; line-height: 1.15; }
-.sub { color: var(--muted); max-width: 64ch; margin: 0 0 32px; }
-.grid { display: grid; gap: 16px; }
-.g3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-.g4 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: var(--shadow); }
-.card h3 { margin: 0 0 6px; font-size: 18px; letter-spacing: -.01em; }
-.card p { margin: 0; color: var(--muted); font-size: 15.5px; }
-.step-n { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px; margin-bottom: 12px; }
-.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 24px; margin: 8px 0 24px; box-shadow: var(--shadow); overflow-x: auto; }
-.figure svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--ink); }
-.figure figcaption { color: var(--muted); font-size: 14px; margin-top: 12px; }
-.stat { font-size: 34px; font-weight: 750; letter-spacing: -.02em; line-height: 1.1; }
-.stat small { font-size: 16px; font-weight: 600; color: var(--muted); margin-left: 4px; }
-.pill { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 999px; margin-bottom: 10px; }
-.pill.ok { background: var(--ok-soft); color: var(--ok); }
-.pill.todo { background: var(--warn-soft); color: var(--warn); }
-table { width: 100%; border-collapse: collapse; font-size: 15px; }
-th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
-td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow-x: auto; box-shadow: var(--shadow); }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--code); padding: 2px 6px; border-radius: 6px; }
-ul.clean { list-style: none; padding: 0; margin: 0; }
-ul.clean li { padding: 8px 0 8px 26px; position: relative; color: var(--muted); }
-ul.clean li::before { content: ""; position: absolute; left: 4px; top: 17px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-ul.clean li b { color: var(--ink); font-weight: 600; }
-.contact { text-align: center; padding: 80px 0; }
-.contact h2 { margin-bottom: 8px; }
-.contact .mail { font-size: clamp(22px, 3vw, 30px); font-weight: 700; letter-spacing: -.01em; }
-footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
-footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.note { font-size: 14px; color: var(--muted); margin-top: 14px; }
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
 </style>
 </head>
 <body>
 
-<header class="top">
-  <div class="wrap">
-    <a class="brand" href="#top" aria-label="Sangama home">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 8c6 0 9 8 12 8s6-8 12-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M4 24c6 0 9-8 12-8s6 8 12 8" fill="none" stroke="#c2410c" stroke-width="2.6" stroke-linecap="round"/></svg>
-      Sangama
-    </a>
-    <nav>
-      <a href="#how">How it works</a>
-      <a href="#architecture">Architecture</a>
-      <a href="#results">Results</a>
-      <a href="#roadmap">Roadmap</a>
-      <a class="cta-link" href="https://github.com/devdil/sangama">GitHub</a>
-    </nav>
-  </div>
-</header>
+<h1>Sangama</h1>
+<p><i>Sangama (संगम) means confluence: computers coming together to run one AI model.</i></p>
 
-<main id="top">
-  <div class="wrap hero">
-    <span class="eyebrow">Experimental · invite-only network · MIT licensed</span>
-    <h1>One AI model, across the computers you already own.</h1>
-    <p class="lede"><b>Sangama (संगम) means confluence.</b> It splits a language model's layers across Macs, GPUs and CPUs, so a model too large for any one device can run on several, with encrypted, invitation-only connections between them.</p>
-    <div class="buttons">
-      <a class="btn primary" href="https://github.com/devdil/sangama">View the code</a>
-      <a class="btn" href="#results">See the test results</a>
-    </div>
-  </div>
+<p>
+<a href="#how">How it works</a> |
+<a href="#architecture">Architecture</a> |
+<a href="#results">Results</a> |
+<a href="#hardware">Hardware</a> |
+<a href="#roadmap">Roadmap</a> |
+<a href="#contact">Contact</a> |
+<a href="https://github.com/devdil/sangama">Source code</a>
+</p>
 
-  <section id="how">
-    <div class="wrap">
-      <h2>How it works</h2>
-      <p class="sub">A language model predicts each next word-piece (a <em>token</em>) by passing numbers through a stack of layers. Sangama gives each computer a contiguous slice of those layers.</p>
-      <figure class="figure">
-        <svg viewBox="0 36 900 200" role="img" aria-labelledby="pipe-title">
-          <title id="pipe-title">A client sends tokens to worker A, which runs layers 0 to 11 and passes intermediate results to worker B, which runs layers 12 to 23 and returns the next token.</title>
-          <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
-          <g font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif" fill="currentColor">
-            <rect x="20" y="70" width="170" height="90" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5"/>
-            <text x="105" y="108" text-anchor="middle" font-weight="700" font-size="17">Client</text>
-            <text x="105" y="132" text-anchor="middle" font-size="13" opacity=".7">prompt → tokens</text>
-            <rect x="330" y="50" width="220" height="130" rx="14" fill="#c2410c" fill-opacity=".10" stroke="#c2410c" stroke-width="1.5"/>
-            <text x="440" y="92" text-anchor="middle" font-weight="700" font-size="17">Worker A</text>
-            <text x="440" y="116" text-anchor="middle" font-size="13" opacity=".75">embedding + layers 0–11</text>
-            <text x="440" y="140" text-anchor="middle" font-size="13" opacity=".75">e.g. a Mac (Metal)</text>
-            <text x="440" y="162" text-anchor="middle" font-size="12" opacity=".55">keeps its own KV cache</text>
-            <rect x="660" y="50" width="220" height="130" rx="14" fill="#c2410c" fill-opacity=".10" stroke="#c2410c" stroke-width="1.5"/>
-            <text x="770" y="92" text-anchor="middle" font-weight="700" font-size="17">Worker B</text>
-            <text x="770" y="116" text-anchor="middle" font-size="13" opacity=".75">layers 12–23 + next token</text>
-            <text x="770" y="140" text-anchor="middle" font-size="13" opacity=".75">e.g. an NVIDIA GPU (CUDA)</text>
-            <text x="770" y="162" text-anchor="middle" font-size="12" opacity=".55">keeps its own KV cache</text>
-            <line x1="192" y1="100" x2="326" y2="100" stroke="currentColor" stroke-width="1.6" marker-end="url(#arr)"/>
-            <text x="259" y="90" text-anchor="middle" font-size="12.5" opacity=".75">tokens</text>
-            <line x1="552" y1="115" x2="656" y2="115" stroke="currentColor" stroke-width="1.6" marker-end="url(#arr)"/>
-            <text x="604" y="105" text-anchor="middle" font-size="12.5" opacity=".75">activations</text>
-            <path d="M770 182 C770 222, 105 222, 105 164" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arr)"/>
-            <text x="440" y="222" text-anchor="middle" font-size="12.5" opacity=".75">one generated token, then repeat</text>
-          </g>
-        </svg>
-        <figcaption>Weights stay loaded on each worker; only small activation frames cross the network for each token.</figcaption>
-      </figure>
-      <div class="grid g3">
-        <div class="card"><div class="step-n">1</div><h3>Contribute</h3><p>Each worker loads only the slice of the model it serves, sized to the memory it offers: unified memory on a Mac, VRAM on a GPU.</p></div>
-        <div class="card"><div class="step-n">2</div><h3>Route</h3><p>A client checks that its workers cover every layer in order, reserves them, and sends the prompt through the chain.</p></div>
-        <div class="card"><div class="step-n">3</div><h3>Generate</h3><p>The last worker picks the next token and returns it. Each worker keeps its own conversation state, so only a few kilobytes move per hop.</p></div>
-      </div>
-    </div>
-  </section>
+<hr>
 
-  <section id="architecture">
-    <div class="wrap">
-      <h2>Architecture</h2>
-      <p class="sub">Sangama keeps three questions apart: <b>who may join</b>, <b>how peers reach each other</b>, and <b>where the model runs</b>.</p>
-      <figure class="figure">
-        <svg viewBox="0 0 900 326" role="img" aria-labelledby="arch-title">
-          <title id="arch-title">The portal issues invitations and signed membership to the client, workers and relay. The client and workers exchange encrypted traffic directly or through the relay, and find shards through a signed DHT.</title>
-          <defs><marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
-          <g font-family="ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif" fill="currentColor">
-            <rect x="280" y="16" width="340" height="70" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5"/>
-            <text x="450" y="46" text-anchor="middle" font-weight="700" font-size="16">Portal</text>
-            <text x="450" y="68" text-anchor="middle" font-size="12.5" opacity=".7">invitations · signed membership · revocation</text>
-            <rect x="30" y="170" width="200" height="90" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5"/>
-            <text x="130" y="206" text-anchor="middle" font-weight="700" font-size="16">Client</text>
-            <text x="130" y="228" text-anchor="middle" font-size="12.5" opacity=".7">plans a route, runs a chat API</text>
-            <rect x="350" y="170" width="200" height="90" rx="14" fill="none" stroke="currentColor" stroke-opacity=".35" stroke-width="1.5" stroke-dasharray="6 5"/>
-            <text x="450" y="206" text-anchor="middle" font-weight="700" font-size="16">Relay</text>
-            <text x="450" y="228" text-anchor="middle" font-size="12.5" opacity=".7">when routers block direct paths</text>
-            <text x="450" y="246" text-anchor="middle" font-size="12" opacity=".55">never runs model layers</text>
-            <rect x="670" y="170" width="200" height="90" rx="14" fill="#c2410c" fill-opacity=".10" stroke="#c2410c" stroke-width="1.5"/>
-            <text x="770" y="206" text-anchor="middle" font-weight="700" font-size="16">Workers</text>
-            <text x="770" y="228" text-anchor="middle" font-size="12.5" opacity=".75">load shards, run layers</text>
-            <text x="770" y="246" text-anchor="middle" font-size="12" opacity=".55">signed shard offers (DHT)</text>
-            <line x1="330" y1="88" x2="150" y2="166" stroke="currentColor" stroke-opacity=".5" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arr2)"/>
-            <line x1="450" y1="88" x2="450" y2="166" stroke="currentColor" stroke-opacity=".5" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arr2)"/>
-            <line x1="570" y1="88" x2="750" y2="166" stroke="currentColor" stroke-opacity=".5" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arr2)"/>
-            <text x="462" y="132" font-size="12" opacity=".65">signed membership</text>
-            <line x1="232" y1="215" x2="346" y2="215" stroke="currentColor" stroke-width="1.6" marker-end="url(#arr2)"/>
-            <line x1="552" y1="215" x2="666" y2="215" stroke="currentColor" stroke-width="1.6" marker-end="url(#arr2)"/>
-            <path d="M130 262 C130 292, 770 292, 770 264" fill="none" stroke="#c2410c" stroke-width="1.6" marker-end="url(#arr2)"/>
-            <text x="450" y="316" text-anchor="middle" font-size="12.5" opacity=".75">direct encrypted connection when the network allows it</text>
-          </g>
-        </svg>
-        <figcaption>Every peer has an Ed25519 identity. Traffic is encrypted end to end with Noise over libp2p, including through the relay.</figcaption>
-      </figure>
-      <div class="grid g4">
-        <div class="card"><h3>Invitation-only</h3><p>Single-use invitations, 24-hour membership and fast revocation. Peers pin the portal's key and drop anyone not on the signed list.</p></div>
-        <div class="card"><h3>Pinned model</h3><p>Workers verify every weight file by SHA-256 against a pinned manifest. A route can't silently mix models or precisions.</p></div>
-        <div class="card"><h3>Two engines</h3><p>Candle for exact F32 on CPU, Metal and CUDA; llama.cpp for Vulkan, ROCm and quantized GGUF weights. Both can share one route.</p></div>
-        <div class="card"><h3>Honest limits</h3><p>Workers can see the data they process, so today's network is for trusted groups. Signatures prove membership, not correct computation.</p></div>
-      </div>
-    </div>
-  </section>
+<p>Sangama is an open-source program, written in Rust, that splits a language model's layers across several computers: Macs, GPUs and ordinary CPUs. A model too large for any one device can then run across several, with encrypted, invitation-only connections between them.</p>
 
-  <section id="results">
-    <div class="wrap">
-      <h2>Results</h2>
-      <p class="sub">Measured on 29 September 2026 with the pinned Qwen2.5-0.5B-Instruct test model, greedy decoding, split across two workers. The full scenario matrix and raw results are <a href="https://github.com/devdil/sangama/tree/main/docs/test-results">in the repository</a>.</p>
+<p><b>Status:</b> experimental. It runs on an invite-only network of trusted computers, and is tested with a small model (Qwen2.5-0.5B-Instruct). It is released under the MIT License.</p>
 
-      <div class="grid g4" style="margin-bottom:24px">
-        <div class="card"><span class="pill ok">Exact</span><div class="stat">Same tokens</div><p>on every full-precision route: CPU, Apple Metal, NVIDIA CUDA and Vulkan, with either engine, mixed in any combination.</p></div>
-        <div class="card"><span class="pill ok">One machine</span><div class="stat">103<small>tok/s</small></div><p>Two RTX 3060s, llama.cpp CUDA, full precision. 220 tok/s with 4-bit weights.</p></div>
-        <div class="card"><span class="pill ok">Across the Internet</span><div class="stat">3.1<small>tok/s</small></div><p>A Mac on a home network paired with a US datacenter GPU, 260–370 ms apart. Distance, not compute, sets the pace.</p></div>
-        <div class="card"><span class="pill ok">Through a relay</span><div class="stat">7 / 7</div><p>generations exact over four minutes of continuous use, with every hop forced through the relay.</p></div>
-      </div>
+<hr>
 
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Route (layers 0–11 → layers 12–23)</th><th>Where</th><th>Result</th><th>Decode speed</th></tr></thead>
-          <tbody>
-            <tr><td>Candle Metal → Candle Metal</td><td>One Mac</td><td>Reference output</td><td class="num">—</td></tr>
-            <tr><td>Candle CUDA → Candle CUDA</td><td>2 GPUs, one machine</td><td>Identical tokens</td><td class="num">55 tok/s</td></tr>
-            <tr><td>llama.cpp CUDA → llama.cpp CUDA</td><td>2 GPUs, one machine</td><td>Identical tokens</td><td class="num">103 tok/s</td></tr>
-            <tr><td>llama.cpp Vulkan → llama.cpp Vulkan</td><td>2 GPUs, one machine</td><td>Identical tokens</td><td class="num">106 tok/s</td></tr>
-            <tr><td>llama.cpp Vulkan → Candle CUDA</td><td>2 GPUs, one machine</td><td>Identical tokens</td><td class="num">86 tok/s</td></tr>
-            <tr><td>Candle Metal → Candle CUDA</td><td>Home Mac → US datacenter</td><td>Identical tokens</td><td class="num">3.1 tok/s</td></tr>
-            <tr><td>Candle CUDA → Candle Metal</td><td>US datacenter → home Mac</td><td>Identical tokens</td><td class="num">1.2 tok/s</td></tr>
-            <tr><td>Candle Metal → Candle CUDA, all hops via relay</td><td>Home Mac, US GPU, relay</td><td>Identical tokens, 7/7</td><td class="num">0.6 tok/s</td></tr>
-            <tr><td>4-bit + full-precision workers mixed</td><td>Any</td><td>Refused, by design</td><td class="num">—</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="note">Speeds are single runs of a small test model and include network round trips; they are not benchmarks. Quantized (4-bit) output is reproducible only with the same weight file on the same GPU backend, so the network enforces one published file per route.</p>
+<h2 id="how">How it works</h2>
 
-      <h3 style="margin:40px 0 12px;font-size:20px">What the testing caught</h3>
-      <div class="grid g3">
-        <div class="card"><h3>GPU context bug</h3><p>CUDA workers failed on every session after the first. Found by the relay test, reproduced locally, fixed and re-tested over five sessions in a row.</p></div>
-        <div class="card"><h3>Relay time limit</h3><p>Relay circuits closed after two minutes, cutting off requests in flight. Raised to an hour; four minutes of continuous traffic then ran clean.</p></div>
-        <div class="card"><h3>Mixed weight files</h3><p>Two differently quantized copies of the same model were silently accepted in one route. Workers now report a hash and routes refuse the mix.</p></div>
-      </div>
-    </div>
-  </section>
+<p>A language model predicts each next piece of text (a <i>token</i>) by passing numbers through a stack of layers. Sangama gives each computer a contiguous slice of those layers.</p>
 
-  <section id="hardware">
-    <div class="wrap">
-      <h2>Runs on the hardware you have</h2>
-      <p class="sub">One Rust binary per platform, with the GPU backend built in.</p>
-      <div class="grid g4">
-        <div class="card"><span class="pill ok">Tested</span><h3>Apple Silicon</h3><p>Metal on M-series Macs, using unified memory.</p></div>
-        <div class="card"><span class="pill ok">Tested</span><h3>NVIDIA</h3><p>CUDA or Vulkan on Linux, one GPU per worker. Memory budgets come from the driver.</p></div>
-        <div class="card"><span class="pill ok">Tested</span><h3>Any CPU</h3><p>macOS and Linux, for small shards or as a fallback.</p></div>
-        <div class="card"><span class="pill todo">Built, not yet tested</span><h3>AMD, Intel, Qualcomm</h3><p>Through llama.cpp's Vulkan and ROCm backends, including Windows.</p></div>
-      </div>
-    </div>
-  </section>
+<pre>
+  +----------+   tokens    +-------------------+  activations  +-------------------+
+  |  Client  | ----------> |     Worker A      | ------------> |     Worker B      |
+  |          |             |  layers 0 - 11    |               |  layers 12 - 23   |
+  |          |             |  (e.g. a Mac)     |               |  (e.g. a GPU)     |
+  +----------+             +-------------------+               +-------------------+
+       ^                                                                 |
+       |                     next token, then repeat                     |
+       +-----------------------------------------------------------------+
+</pre>
 
-  <section id="roadmap">
-    <div class="wrap">
-      <h2>Roadmap</h2>
-      <p class="sub">Today's network proves the pieces with a small model. Next:</p>
-      <ul class="clean">
-        <li><b>Large open models.</b> Qwen3.5-397B is the first target: about 3–5 well-placed peers per copy at 4-bit.</li>
-        <li><b>Published weights.</b> Quantize once, publish per-worker slices with their hashes, and have each worker download only the layers it serves.</li>
-        <li><b>More hardware.</b> AMD, Intel, Qualcomm and Windows test runs, then phones.</li>
-        <li><b>Region-aware routing.</b> Keep each route within one city or region, since round trips dominate speed.</li>
-        <li><b>Two home networks.</b> The next acceptance test: two home routers, relay, and direct hole punching.</li>
-      </ul>
-    </div>
-  </section>
+<ol>
+<li><b>Contribute.</b> Each worker loads only the slice of the model it serves, sized to the memory it offers.</li>
+<li><b>Route.</b> A client checks that its workers cover every layer in order, reserves them, and sends the prompt through the chain.</li>
+<li><b>Generate.</b> The last worker picks the next token and sends it back. Each worker keeps its own conversation state, so only a few kilobytes cross the network for each token.</li>
+</ol>
 
-  <section class="contact" id="contact">
-    <div class="wrap">
-      <h2>Get involved</h2>
-      <p class="sub" style="margin:0 auto 20px">Want to contribute a GPU, join a test network, or help build it? Say hello.</p>
-      <p><a class="mail" href="mailto:hello@sangama.co">hello@sangama.co</a></p>
-      <div class="buttons" style="justify-content:center;margin-top:20px">
-        <a class="btn primary" href="https://github.com/devdil/sangama">GitHub</a>
-        <a class="btn" href="https://github.com/devdil/sangama/blob/main/CONTRIBUTING.md">Contributor guide</a>
-      </div>
-    </div>
-  </section>
-</main>
+<p>The model's weights stay loaded on the workers; they are not sent over the network for each request.</p>
 
-<footer>
-  <div class="wrap">
-    <span>Sangama · open source under the MIT License</span>
-    <span><a href="mailto:hello@sangama.co">hello@sangama.co</a> · <a href="https://github.com/devdil/sangama">GitHub</a></span>
-  </div>
-</footer>
+<hr>
+
+<h2 id="architecture">Architecture</h2>
+
+<p>Sangama keeps three questions apart: who may join, how computers reach each other, and where the model runs.</p>
+
+<pre>
+                  +---------------------------------------------+
+                  |                   Portal                    |
+                  | invitations, signed membership, revocation  |
+                  +---------------------------------------------+
+                        |                   |                  |
+                  signed membership list, checked every few seconds
+                        v                   v                  v
+                  +----------+        +----------+       +----------+
+                  |  Client  | &lt;----&gt; |  Relay   | &lt;---&gt; | Workers  |
+                  +----------+        +----------+       +----------+
+                        |          (only when routers         ^
+                        |           block a direct path)      |
+                        +-------------------------------------+
+                            direct encrypted connection
+</pre>
+
+<table>
+<tr><th>Part</th><th>What it does</th></tr>
+<tr><td>Worker</td><td>Contributes memory and compute. Loads its share of the model and runs those layers.</td></tr>
+<tr><td>Client</td><td>Finds workers, checks they cover the whole model, and runs requests through them.</td></tr>
+<tr><td>Portal</td><td>Issues single-use invitations, keeps the membership list, and revokes members.</td></tr>
+<tr><td>Relay</td><td>Passes encrypted traffic between computers when their routers block a direct connection. It never runs model layers and cannot read the traffic.</td></tr>
+<tr><td>Discovery</td><td>Workers advertise which part of the model they hold, in signed records.</td></tr>
+</table>
+
+<p>Every computer has its own Ed25519 identity, and all traffic is encrypted end to end (Noise over libp2p). Workers check every model file against a pinned SHA-256 list, so a route cannot silently use a different model.</p>
+
+<p><b>A limit to know about:</b> a worker can see the data it processes, so today's network is meant for trusted groups. Signatures prove who is a member, not that a computation was done correctly.</p>
+
+<hr>
+
+<h2 id="results">Results</h2>
+
+<p>Measured on 29 September 2026 with the Qwen2.5-0.5B-Instruct test model, split across two workers. The full list of test scenarios and raw results is <a href="https://github.com/devdil/sangama/tree/main/docs/test-results">in the repository</a>.</p>
+
+<ul>
+<li><b>Same answer everywhere.</b> At full precision, every combination produced exactly the same tokens: CPU, Apple Metal, NVIDIA CUDA and Vulkan, with either of the two engines, mixed in any order.</li>
+<li><b>One machine, two GPUs:</b> 103 tokens per second (220 with 4-bit weights).</li>
+<li><b>Across the Internet:</b> 3.1 tokens per second between a Mac on a home network and a GPU in a US datacenter, 260-370 ms apart. Distance, not computing power, sets the pace.</li>
+<li><b>Through a relay:</b> 7 out of 7 generations were exact over four minutes of continuous use, with every connection forced through the relay.</li>
+</ul>
+
+<table>
+<tr><th>Route (layers 0-11 &rarr; 12-23)</th><th>Where</th><th>Result</th><th>Speed</th></tr>
+<tr><td>Candle Metal &rarr; Candle Metal</td><td>One Mac</td><td>Reference output</td><td>-</td></tr>
+<tr><td>Candle CUDA &rarr; Candle CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>55 tokens/s</td></tr>
+<tr><td>llama.cpp CUDA &rarr; llama.cpp CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>103 tokens/s</td></tr>
+<tr><td>llama.cpp Vulkan &rarr; llama.cpp Vulkan</td><td>Two GPUs, one machine</td><td>Identical</td><td>106 tokens/s</td></tr>
+<tr><td>llama.cpp Vulkan &rarr; Candle CUDA</td><td>Two GPUs, one machine</td><td>Identical</td><td>86 tokens/s</td></tr>
+<tr><td>Candle Metal &rarr; Candle CUDA</td><td>Home Mac &rarr; US datacenter</td><td>Identical</td><td>3.1 tokens/s</td></tr>
+<tr><td>Candle CUDA &rarr; Candle Metal</td><td>US datacenter &rarr; home Mac</td><td>Identical</td><td>1.2 tokens/s</td></tr>
+<tr><td>Candle Metal &rarr; Candle CUDA, all through a relay</td><td>Home Mac, US GPU, relay</td><td>Identical, 7 of 7</td><td>0.6 tokens/s</td></tr>
+<tr><td>4-bit and full-precision workers mixed</td><td>Any</td><td>Refused, by design</td><td>-</td></tr>
+</table>
+
+<p class="small">Speeds are single runs of a small test model and include network delay; they are not benchmarks. 4-bit output is only reproducible with the same weight file on the same kind of GPU, so a route must use one published file.</p>
+
+<h3>What the testing caught</h3>
+<ul>
+<li><b>GPU context bug:</b> NVIDIA CUDA workers failed on every conversation after the first. Found, fixed, and re-tested over five conversations in a row.</li>
+<li><b>Relay time limit:</b> relay connections closed after two minutes, cutting off requests in progress. Raised to one hour; four minutes of continuous traffic then ran cleanly.</li>
+<li><b>Mixed weight files:</b> two differently compressed copies of the same model were accepted in one route. Workers now report a checksum, and such routes are refused.</li>
+</ul>
+
+<hr>
+
+<h2 id="hardware">Hardware</h2>
+
+<table>
+<tr><th>Hardware</th><th>How</th><th>Status</th></tr>
+<tr><td>Apple Silicon Macs</td><td>Metal, using unified memory</td><td>Tested</td></tr>
+<tr><td>NVIDIA GPUs</td><td>CUDA or Vulkan on Linux, one GPU per worker</td><td>Tested</td></tr>
+<tr><td>Any CPU</td><td>macOS and Linux</td><td>Tested</td></tr>
+<tr><td>AMD, Intel, Qualcomm GPUs</td><td>Vulkan or ROCm, through llama.cpp</td><td>Built, not yet tested</td></tr>
+<tr><td>Windows</td><td>CUDA or Vulkan</td><td>Not yet tested</td></tr>
+</table>
+
+<hr>
+
+<h2 id="roadmap">Roadmap</h2>
+<ul>
+<li><b>Large open models.</b> Qwen3.5-397B is the first target: about 3 to 5 well-placed computers per copy, with 4-bit weights.</li>
+<li><b>Published weights.</b> Compress the model once and publish it in slices with checksums, so each worker downloads only the layers it serves.</li>
+<li><b>More hardware.</b> Test runs on AMD, Intel, Qualcomm and Windows, then phones.</li>
+<li><b>Nearby routes.</b> Keep each route within one city or region, since network distance sets the speed.</li>
+<li><b>Two home networks.</b> The next acceptance test: two home routers, a relay, and direct connections through NAT.</li>
+</ul>
+
+<hr>
+
+<h2 id="contact">Contact</h2>
+<p>Want to contribute a GPU, join a test network, or help build Sangama? Write to <a href="mailto:hello@sangama.co">hello@sangama.co</a>.</p>
+<p>Source code: <a href="https://github.com/devdil/sangama">github.com/devdil/sangama</a> &middot; <a href="https://github.com/devdil/sangama/blob/main/CONTRIBUTING.md">Contributor guide</a></p>
+
+<hr>
+<p class="small">Sangama is open source under the MIT License.</p>
+
 </body>
 </html>
