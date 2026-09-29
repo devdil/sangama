@@ -45,6 +45,18 @@ pub struct Info {
     pub weights_sha256: Option<String>,
 }
 
+/// Test-only: `SANGAMA_SIMULATE_MS_PER_LAYER_TOKEN` adds this many milliseconds per layer and
+/// position to every forward, so a fast container can stand in for a slower device.
+fn simulated_ms_per_layer_token() -> Option<f64> {
+    static VALUE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("SANGAMA_SIMULATE_MS_PER_LAYER_TOKEN")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1000.0)
+    })
+}
+
 fn candle_engine() -> String {
     "candle".into()
 }
@@ -159,6 +171,12 @@ pub async fn serve(
         .layer(middleware::from_fn_with_state(token, server::authenticate))
         .with_state(state);
     let listener = TcpListener::bind(listen).await?;
+    if let Some(ms) = simulated_ms_per_layer_token() {
+        tracing::warn!(
+            ms_per_layer_token = ms,
+            "device simulation: adding artificial compute delay; not for real use"
+        );
+    }
     tracing::info!(%listen, shard = index, device = backend, engine = %engine_name, %precision, "Qwen shard loaded; ready");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -416,6 +434,12 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
                     return Err(error);
                 }
             };
+        if let Some(ms) = simulated_ms_per_layer_token() {
+            let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
+            std::thread::sleep(Duration::from_secs_f64(
+                ms * layers * h.seq_len as f64 / 1000.0,
+            ));
+        }
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         resident.session = Some(Session {
             id: h.session.clone(),

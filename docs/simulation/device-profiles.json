@@ -1,0 +1,33 @@
+{
+  "note": "Starting assumptions, not measurements. Calibrate compute_ms_per_layer_token and the network numbers against real devices before drawing performance conclusions. Memory is sized for the small test model's shard; `represents` records the real device class.",
+  "profiles": {
+    "desktop-fibre": {
+      "represents": "Desktop or gaming PC with a GPU on a fibre line, always on",
+      "memory_mib": 2400, "cpus": 3, "memory_budget_mib": 1900,
+      "compute_ms_per_layer_token": 0,
+      "network": {"delay_ms": 4, "jitter_ms": 1, "rate_mbit": 100, "loss_percent": 0},
+      "availability": {"kind": "always"}
+    },
+    "macbook-wifi": {
+      "represents": "Recent MacBook on home Wi-Fi; the lid closes now and then",
+      "memory_mib": 2400, "cpus": 2, "memory_budget_mib": 1900,
+      "compute_ms_per_layer_token": 1.5,
+      "network": {"delay_ms": 12, "jitter_ms": 4, "rate_mbit": 40, "loss_percent": 0.1},
+      "availability": {"kind": "sleeps", "awake_s": 90, "asleep_s": 25}
+    },
+    "old-laptop-wifi": {
+      "represents": "Older 8 GB laptop on a busy home Wi-Fi network",
+      "memory_mib": 2400, "cpus": 1, "memory_budget_mib": 1900,
+      "compute_ms_per_layer_token": 6,
+      "network": {"delay_ms": 20, "jitter_ms": 8, "rate_mbit": 15, "loss_percent": 0.5},
+      "availability": {"kind": "sleeps", "awake_s": 60, "asleep_s": 40}
+    },
+    "phone-4g": {
+      "represents": "Phone on 4G; backgrounded often (a worker only for small models)",
+      "memory_mib": 2400, "cpus": 1, "memory_budget_mib": 1900,
+      "compute_ms_per_layer_token": 15,
+      "network": {"delay_ms": 45, "jitter_ms": 15, "rate_mbit": 8, "loss_percent": 1.0},
+      "availability": {"kind": "sleeps", "awake_s": 45, "asleep_s": 45}
+    }
+  }
+}

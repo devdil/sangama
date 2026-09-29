@@ -1,0 +1,10 @@
+{
+  "description": "Four home devices, two per shard of the test model, each on its own network and reachable only through the relay",
+  "duration_s": 300,
+  "devices": [
+    {"name": "desk", "profile": "desktop-fibre", "shard": 0},
+    {"name": "phone", "profile": "phone-4g", "shard": 0},
+    {"name": "mac", "profile": "macbook-wifi", "shard": 1},
+    {"name": "oldlaptop", "profile": "old-laptop-wifi", "shard": 1}
+  ]
+}
