@@ -59,6 +59,7 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
         config_sha256: qwen::sha256(&dir.0.join("config.json")).unwrap(),
         tokenizer_sha256: qwen::sha256(&dir.0.join("tokenizer.json")).unwrap(),
         shards: vec![shard.clone()],
+        sliced: None,
     };
     std::fs::write(
         dir.0.join("manifest.json"),

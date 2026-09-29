@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
-const MAX_HEADER_BYTES: usize = 64 * 1024;
+pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Endpoint {
@@ -50,15 +50,15 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn valid_output(&self) -> bool {
+    pub fn valid_output(&self, vocab_size: usize) -> bool {
         if self.header.sample {
             self.header.kind == Kind::Sampled
                 && self.values.is_empty()
                 && self.header.tokens.len() == 1
-                && self.header.tokens[0] < 151936
+                && (self.header.tokens[0] as usize) < vocab_size
         } else {
             self.header.kind == Kind::Logits
-                && self.values.len() == 151936
+                && self.values.len() == vocab_size
                 && self.header.tokens.is_empty()
         }
     }

@@ -34,7 +34,9 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-pub fn format_chat(messages: &[ChatMessage]) -> Result<String> {
+/// Formats a conversation in the Qwen chat template. `assistant_prefix` follows the assistant
+/// header, e.g. to turn off Qwen3.5 thinking (see `Manifest::assistant_prefix`).
+pub fn format_chat(messages: &[ChatMessage], assistant_prefix: &str) -> Result<String> {
     ensure!(
         !messages.is_empty() && messages.len() <= 64,
         "expected 1..64 messages"
@@ -60,6 +62,7 @@ pub fn format_chat(messages: &[ChatMessage]) -> Result<String> {
     );
     ensure!(formatted.len() <= 128 * 1024, "conversation too large");
     formatted.push_str("<|im_start|>assistant\n");
+    formatted.push_str(assistant_prefix);
     Ok(formatted)
 }
 
@@ -69,8 +72,8 @@ pub async fn chat(
     messages: Vec<ChatMessage>,
     deltas: Option<tokio::sync::mpsc::Sender<String>>,
 ) -> Result<Report> {
-    let formatted = format_chat(&messages)?;
-    execute_chat(options, false, Some(formatted), deltas).await
+    format_chat(&messages, "")?;
+    execute_chat(options, false, Some(messages), deltas).await
 }
 
 #[derive(Serialize)]
@@ -320,7 +323,12 @@ fn request(
     }
 }
 
-async fn step(http: &reqwest::Client, token: &str, frame: &Frame) -> Result<Frame> {
+async fn step(
+    http: &reqwest::Client,
+    token: &str,
+    frame: &Frame,
+    vocab_size: usize,
+) -> Result<Frame> {
     let response = http
         .post(url(frame.header.route[0].address, "/v1/qwen/forward"))
         .bearer_auth(token)
@@ -330,7 +338,7 @@ async fn step(http: &reqwest::Client, token: &str, frame: &Frame) -> Result<Fram
         .await?;
     let response = super::wire::response(response).await?;
     ensure!(
-        response.valid_output()
+        response.valid_output(vocab_size)
             && response.header.sample == frame.header.sample
             && response.header.model_hash == frame.header.model_hash
             && response.header.session == frame.header.session
@@ -359,7 +367,7 @@ async fn execute(options: Options, verify: bool) -> Result<Report> {
 async fn execute_chat(
     options: Options,
     verify: bool,
-    conversation: Option<String>,
+    conversation: Option<Vec<ChatMessage>>,
     deltas: Option<tokio::sync::mpsc::Sender<String>>,
 ) -> Result<Report> {
     ensure!(
@@ -388,10 +396,37 @@ async fn execute_chat(
     let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json"))
         .map_err(|e| anyhow::anyhow!("tokenizer: {e}"))?;
     let is_chat = conversation.is_some();
-    let formatted = conversation.unwrap_or_else(|| format!(
-        "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-        options.prompt
-    ));
+    let sliced = manifest.sliced.is_some();
+    ensure!(
+        !sliced || (!verify && !options.peers.is_empty()),
+        "a sliced model runs only on supplied peers, without a local baseline"
+    );
+    let formatted = match conversation {
+        Some(messages) => format_chat(&messages, manifest.assistant_prefix())?,
+        None => format!(
+            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n{}",
+            options.prompt,
+            manifest.assistant_prefix()
+        ),
+    };
+    // The pinned checkpoint keeps its fixed end ids; a sliced model names them in its manifest.
+    let eos: Vec<u32> = if sliced {
+        manifest
+            .eos_tokens()
+            .iter()
+            .map(|t| {
+                tokenizer
+                    .token_to_id(t)
+                    .with_context(|| format!("tokenizer has no end token {t}"))
+            })
+            .collect::<Result<_>>()?
+    } else {
+        vec![151645, 151643]
+    };
+    let vocab_size = manifest.vocab_size();
+    // Hidden-state frames must fit MAX_FRAME_BYTES, so wide models send the prompt in chunks.
+    let chunk_tokens =
+        ((MAX_FRAME_BYTES - MAX_HEADER_BYTES - 4) / (4 * manifest.hidden_size())).clamp(1, 512);
     let prompt = tokenizer
         .encode(formatted, false)
         .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?
@@ -503,6 +538,7 @@ async fn execute_chat(
                 &http,
                 &options.token,
                 &request(&model_hash, &session, &route, &prompt, 0, false),
+                vocab_size,
             )
             .await?;
             reset(&http, &addresses, &options.token, &session).await?;
@@ -523,7 +559,7 @@ async fn execute_chat(
             };
             let now = Instant::now();
             let mut last = None;
-            for chunk in context.chunks(512) {
+            for chunk in context.chunks(chunk_tokens) {
                 if let Some(sender) = &deltas {
                     ensure!(!sender.is_closed(), "client disconnected");
                 }
@@ -532,6 +568,7 @@ async fn execute_chat(
                         &http,
                         &options.token,
                         &request(&model_hash, &session, &route, chunk, position, !verify),
+                        vocab_size,
                     )
                     .await?,
                 );
@@ -565,7 +602,7 @@ async fn execute_chat(
                     break;
                 }
             }
-            if id == 151645 || id == 151643 {
+            if eos.contains(&id) {
                 finish_reason = "eos";
                 break;
             }

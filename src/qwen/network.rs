@@ -109,6 +109,10 @@ pub async fn serve(
     let (model, precision, weights_sha256, memory) = match engine.name {
         "candle" => {
             ensure!(engine.gguf.is_none(), "--gguf requires --engine llamacpp");
+            ensure!(
+                manifest.sliced.is_none(),
+                "this model is published as GGUF slices; use --engine llamacpp"
+            );
             // Create the device first: it reports a missing build feature clearly, and a CUDA
             // context's own memory is then excluded from the measured budget.
             let device = device(backend)?;
@@ -136,7 +140,7 @@ pub async fn serve(
                 memory,
             )
         }
-        "llamacpp" => open_llamacpp(dir, &spec, &hash, backend, engine.gguf)?,
+        "llamacpp" => open_llamacpp(dir, &manifest, &spec, &hash, backend, engine.gguf)?,
         other => anyhow::bail!("unknown engine {other}"),
     };
     let state = Worker {
@@ -189,6 +193,7 @@ pub async fn serve(
 #[cfg(feature = "llamacpp")]
 fn open_llamacpp(
     dir: &Path,
+    manifest: &Manifest,
     spec: &ShardSpec,
     hash: &str,
     backend: &str,
@@ -236,11 +241,11 @@ fn open_llamacpp(
         },
     )?;
     ensure!(
-        stage.architecture() == "qwen2"
-            && stage.layers() == 24
-            && stage.hidden_size() == 896
-            && stage.vocab_size() == 151936,
-        "GGUF does not match the pinned Qwen2.5-0.5B architecture"
+        stage.architecture() == manifest.architecture()
+            && stage.layers() == manifest.layers()
+            && stage.hidden_size() == manifest.hidden_size()
+            && stage.vocab_size() == manifest.vocab_size(),
+        "GGUF architecture or shape does not match the manifest"
     );
     ensure!(
         stage.precision() == gguf.precision,
@@ -259,6 +264,7 @@ fn open_llamacpp(
 #[cfg(not(feature = "llamacpp"))]
 fn open_llamacpp(
     _: &Path,
+    _: &Manifest,
     _: &ShardSpec,
     _: &str,
     _: &str,
@@ -377,12 +383,16 @@ fn validate(frame: &Frame, state: &Worker) -> Result<()> {
             "first shard requires tokens"
         );
         ensure!(
-            h.tokens.iter().all(|t| *t < 151936),
+            h.tokens
+                .iter()
+                .all(|t| (*t as usize) < state.manifest.vocab_size()),
             "token outside vocabulary"
         );
     } else {
         ensure!(
-            h.kind == Kind::Hidden && h.tokens.is_empty() && frame.values.len() == h.seq_len * 896,
+            h.kind == Kind::Hidden
+                && h.tokens.is_empty()
+                && frame.values.len() == h.seq_len * state.manifest.hidden_size(),
             "hidden tensor shape mismatch"
         );
     }
@@ -462,7 +472,8 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
         };
         if header.route.is_empty() && header.sample {
             ensure!(
-                values.len() == 151936 && values.iter().all(|v| v.is_finite()),
+                values.len() == worker.manifest.vocab_size()
+                    && values.iter().all(|v| v.is_finite()),
                 "invalid final logits"
             );
             let mut best = 0;
@@ -491,7 +502,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
                 .await?;
             let output = super::wire::response(response).await?;
             ensure!(
-                output.valid_output()
+                output.valid_output(state.manifest.vocab_size())
                     && output.header.sample == frame.header.sample
                     && output.header.model_hash == frame.header.model_hash
                     && output.header.session == frame.header.session

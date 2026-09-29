@@ -115,6 +115,7 @@ mod tests {
             config_sha256: "c".into(),
             tokenizer_sha256: "t".into(),
             shards: vec![spec.clone()],
+            sliced: None,
         };
         let info = Info {
             model_id: "model".into(),

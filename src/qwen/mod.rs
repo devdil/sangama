@@ -47,6 +47,60 @@ pub struct Manifest {
     pub config_sha256: String,
     pub tokenizer_sha256: String,
     pub shards: Vec<ShardSpec>,
+    /// Present for a model published as per-layer GGUF slices; absent for the pinned Qwen2.5
+    /// checkpoint, whose shape is fixed below.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sliced: Option<SlicedModel>,
+}
+
+/// A model published as per-layer GGUF slices (scripts/split-gguf.py) and run with llama.cpp.
+/// Each shard's `sha256` is the digest of its slices' checksums (scripts/prepare-stage.py), so a
+/// stage is pinned to exact slice files just as a Candle shard is pinned to its file.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlicedModel {
+    pub architecture: String,
+    pub layers: usize,
+    pub hidden_size: usize,
+    pub vocab_size: usize,
+    /// Tokens that end generation, by their text in the tokenizer.
+    pub eos_tokens: Vec<String>,
+    /// Text after the assistant header, e.g. `<think>\n\n</think>\n\n` to turn off Qwen3.5
+    /// thinking.
+    #[serde(default)]
+    pub assistant_prefix: String,
+    pub slices_repo: String,
+    pub slices_revision: String,
+    pub slices_manifest_sha256: String,
+}
+
+impl Manifest {
+    pub fn layers(&self) -> usize {
+        self.sliced.as_ref().map_or(LAYERS, |m| m.layers)
+    }
+    pub fn hidden_size(&self) -> usize {
+        self.sliced.as_ref().map_or(896, |m| m.hidden_size)
+    }
+    pub fn vocab_size(&self) -> usize {
+        self.sliced.as_ref().map_or(151936, |m| m.vocab_size)
+    }
+    pub fn eos_tokens(&self) -> Vec<&str> {
+        self.sliced.as_ref().map_or_else(
+            || vec!["<|im_end|>", "<|endoftext|>"],
+            |m| m.eos_tokens.iter().map(String::as_str).collect(),
+        )
+    }
+    pub fn assistant_prefix(&self) -> &str {
+        self.sliced
+            .as_ref()
+            .map_or("", |m| m.assistant_prefix.as_str())
+    }
+    /// The llama.cpp architecture a GGUF for this model must declare.
+    pub fn architecture(&self) -> &str {
+        self.sliced
+            .as_ref()
+            .map_or("qwen2", |m| m.architecture.as_str())
+    }
 }
 
 pub fn sha256(path: &Path) -> Result<String> {
@@ -77,34 +131,49 @@ pub fn load_manifest(dir: &Path) -> Result<(Manifest, String)> {
     let path = dir.join("manifest.json");
     let bytes = std::fs::read(&path).context("run python3 scripts/fetch-qwen.py first")?;
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
-    ensure!(
-        manifest.model_id == MODEL_ID
-            && manifest.revision == REVISION
-            && manifest.weights_sha256 == WEIGHTS_SHA256,
-        "unsupported checkpoint/revision"
-    );
+    let extension = if let Some(m) = &manifest.sliced {
+        ensure!(
+            (1..=1024).contains(&m.layers)
+                && (1..=65536).contains(&m.hidden_size)
+                && (1..=1 << 20).contains(&m.vocab_size)
+                && !m.eos_tokens.is_empty()
+                && m.slices_manifest_sha256.len() == 64,
+            "invalid sliced-model description"
+        );
+        ".gguf"
+    } else {
+        ensure!(
+            manifest.model_id == MODEL_ID
+                && manifest.revision == REVISION
+                && manifest.weights_sha256 == WEIGHTS_SHA256,
+            "unsupported checkpoint/revision"
+        );
+        ".safetensors"
+    };
     ensure!(
         (1..=8).contains(&manifest.shards.len()),
         "expected 1..=8 shards"
     );
+    let layers = manifest.layers();
     let mut next = 0;
     for (index, shard) in manifest.shards.iter().enumerate() {
         ensure!(
             shard.index == index
                 && shard.start == next
                 && shard.end > shard.start
-                && shard.end <= 24,
+                && shard.end <= layers,
             "manifest layer gap/overlap"
         );
         ensure!(
-            Path::new(&shard.file).components().count() == 1
-                && shard.file.ends_with(".safetensors"),
+            Path::new(&shard.file).components().count() == 1 && shard.file.ends_with(extension),
             "invalid shard filename"
         );
         next = shard.end;
     }
-    ensure!(next == 24, "manifest must cover all 24 layers");
-    check_hash(&dir.join("config.json"), &manifest.config_sha256)?;
+    ensure!(next == layers, "manifest must cover all {layers} layers");
+    if manifest.sliced.is_none() {
+        check_hash(&dir.join("config.json"), &manifest.config_sha256)?;
+    }
     Ok((manifest, format!("{:x}", Sha256::digest(&bytes))))
 }
 
@@ -235,6 +304,51 @@ mod tests {
             }],
         };
         std::fs::write(dir.join("gguf.json"), serde_json::to_vec(&index).unwrap()).unwrap();
+    }
+
+    fn sliced_manifest(shards: &[(usize, usize)], layers: usize) -> String {
+        let shards: Vec<_> = shards
+            .iter()
+            .enumerate()
+            .map(|(i, (start, end))| {
+                serde_json::json!({"index": i, "start": start, "end": end,
+                    "file": format!("stage-{i}.gguf"), "sha256": "0".repeat(64),
+                    "file_bytes": 1, "tensor_count": 1})
+            })
+            .collect();
+        serde_json::json!({"model_id": "m", "revision": "r", "weights_sha256": "w",
+            "config_sha256": "", "tokenizer_sha256": "t", "shards": shards,
+            "sliced": {"architecture": "qwen35moe", "layers": layers, "hidden_size": 4096,
+                "vocab_size": 248320, "eos_tokens": ["<|im_end|>"],
+                "assistant_prefix": "<think>\n\n</think>\n\n", "slices_repo": "a/b",
+                "slices_revision": "c", "slices_manifest_sha256": "1".repeat(64)}})
+        .to_string()
+    }
+
+    #[test]
+    fn sliced_manifest_sets_model_shape() {
+        let (dir, _) = fixture();
+        std::fs::write(
+            dir.join("manifest.json"),
+            sliced_manifest(&[(0, 20), (20, 40), (40, 60)], 60),
+        )
+        .unwrap();
+        let (manifest, _) = load_manifest(&dir).unwrap();
+        assert_eq!(manifest.layers(), 60);
+        assert_eq!(manifest.hidden_size(), 4096);
+        assert_eq!(manifest.vocab_size(), 248320);
+        assert_eq!(manifest.architecture(), "qwen35moe");
+        assert_eq!(manifest.eos_tokens(), vec!["<|im_end|>"]);
+        // Gaps, overlaps and partial coverage are refused as for the pinned model.
+        for shards in [
+            vec![(0, 20), (21, 60)],
+            vec![(0, 30), (20, 60)],
+            vec![(0, 20), (20, 50)],
+        ] {
+            std::fs::write(dir.join("manifest.json"), sliced_manifest(&shards, 60)).unwrap();
+            assert!(load_manifest(&dir).is_err(), "{shards:?}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

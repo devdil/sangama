@@ -120,7 +120,7 @@ fn validate(input: &Completion) -> Result<usize> {
         "output limit must be 1..{} tokens",
         crate::qwen::OUTPUT_LIMIT
     );
-    runner::format_chat(&input.messages)?;
+    runner::format_chat(&input.messages, "")?;
     Ok(limit)
 }
 async fn models() -> Json<Value> {
@@ -292,7 +292,7 @@ mod tests {
                 content: "What number?".into(),
             },
         ];
-        let text = runner::format_chat(&messages).unwrap();
+        let text = runner::format_chat(&messages, "").unwrap();
         assert!(text.contains("<|im_start|>assistant\nOK<|im_end|>"));
         assert!(text.ends_with("<|im_start|>assistant\n"));
     }
