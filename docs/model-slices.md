@@ -58,8 +58,12 @@ The whole model does not fit in that machine's memory, so correctness was checke
 
 Before the M-RoPE fix, the same middle stage differed from itself by up to 2.6, and the chains by up to 2.7.
 
+**Published:** [diljitpr/Qwen3.5-397B-A17B-Q4_K_M-slices](https://huggingface.co/diljitpr/Qwen3.5-397B-A17B-Q4_K_M-slices) on Hugging Face (public, Apache 2.0, with a model card and the licence). It has 66 files and 244.8 GB, and every size matches `model.json`. Two slices downloaded anonymously matched their SHA-256.
+
+Hugging Face deduplicates storage in chunks, and the slices hold the same tensor bytes as Unsloth's upload, so 245 GB uploaded in a few minutes. A free account's private-storage limit stopped the upload at 79 GB; the repo was made public to finish.
+
 ## Still to do
 
-- Publish the slices with their hashes (Cloudflare R2 or a Hugging Face repo), and have workers download and verify only their own layers.
+- Have workers download and verify only their own layers from the published repo.
 - Generalise Sangama's pinned manifest and worker checks, which are still specific to Qwen2.5-0.5B.
 - Run the full model across machines. Three 128 GB+ devices hold one copy at Q4_K_M.
