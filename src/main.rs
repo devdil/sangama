@@ -84,7 +84,7 @@ enum Command {
         listen: SocketAddr,
         #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
         model_dir: PathBuf,
-        #[arg(long, default_value = "metal", value_parser = ["cpu", "metal"])]
+        #[arg(long, default_value = "metal", value_parser = sangama::qwen::DEVICES)]
         device: String,
         #[arg(long, value_delimiter = ',', required = true)]
         peers: Vec<SocketAddr>,
@@ -124,7 +124,7 @@ enum Command {
         listen: SocketAddr,
         #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
         model_dir: PathBuf,
-        #[arg(long, default_value = "cpu", value_parser = ["cpu", "metal"])]
+        #[arg(long, default_value = "cpu", value_parser = sangama::qwen::DEVICES)]
         device: String,
         #[arg(long, value_delimiter = ',')]
         peers: Vec<SocketAddr>,
@@ -133,7 +133,7 @@ enum Command {
     Generate {
         #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
         model_dir: PathBuf,
-        #[arg(long, default_value = "cpu", value_parser = ["cpu", "metal"])]
+        #[arg(long, default_value = "cpu", value_parser = sangama::qwen::DEVICES)]
         device: String,
         #[arg(
             long,
@@ -152,7 +152,7 @@ enum Command {
     QwenTest {
         #[arg(long, default_value = ".models/qwen2.5-0.5b-instruct")]
         model_dir: PathBuf,
-        #[arg(long, default_value = "cpu", value_parser = ["cpu", "metal"])]
+        #[arg(long, default_value = "cpu", value_parser = sangama::qwen::DEVICES)]
         device: String,
         #[arg(
             long,
@@ -173,7 +173,7 @@ enum Command {
         model_dir: PathBuf,
         #[arg(long)]
         shard: usize,
-        #[arg(long, default_value = "cpu", value_parser = ["cpu", "metal"])]
+        #[arg(long, default_value = "cpu", value_parser = sangama::qwen::DEVICES)]
         device: String,
         #[arg(long, default_value = "127.0.0.1:7901")]
         listen: SocketAddr,
@@ -554,7 +554,7 @@ async fn main() -> Result<()> {
                     "os": std::env::consts::OS, "architecture": std::env::consts::ARCH,
                     "logical_cpus": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
                     "physical_memory_bytes": memory,
-                    "backends": ["CPU numerical fixture", "Candle Qwen2.5"], "metal_compiled": cfg!(feature = "metal"),
+                    "backends": ["CPU numerical fixture", "Candle Qwen2.5"], "metal_compiled": cfg!(feature = "metal"), "cuda_compiled": cfg!(feature = "cuda"),
                     "model_download_required": "Qwen: yes; numerical fixture: no",
                     "next_step": "Run demo, or fetch the pinned Qwen checkpoint and run qwen-test"
                 }),

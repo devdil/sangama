@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# CUDA worker image for GPU slice tests. No GPU is visible during `docker build`, so the
+# kernel build needs the target compute capability, e.g. 90 for H100, 89 for L4/RTX 4090.
+ARG CUDA_VERSION=13.4.1
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS build
+ARG CUDA_COMPUTE_CAP
+RUN test -n "$CUDA_COMPUTE_CAP" || (echo "set --build-arg CUDA_COMPUTE_CAP=<e.g. 90>" && exit 1)
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config ca-certificates curl && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+WORKDIR /app
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/network-auth ./crates/network-auth
+COPY src ./src
+COPY ui ./ui
+ENV CARGO_BUILD_JOBS=4 CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git --mount=type=cache,target=/app/target \
+    cargo build --release --locked --features cuda && cp target/release/sangama /usr/local/bin/sangama
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
+RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin sangama
+COPY --from=build /usr/local/bin/sangama /usr/local/bin/sangama
+USER 10001:10001
+ENTRYPOINT ["sangama"]

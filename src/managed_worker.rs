@@ -71,7 +71,7 @@ impl Manager {
         next: Vec<SocketAddr>,
     ) -> Result<Self> {
         ensure!(
-            ["cpu", "metal"].contains(&config.device.as_str()),
+            crate::qwen::DEVICES.contains(&config.device.as_str()),
             "unsupported managed device"
         );
         let (manifest, hash) = crate::qwen::load_manifest(&config.model_dir)?;
@@ -108,7 +108,8 @@ impl Manager {
             .await?)
     }
     fn capacity(&self, state: &State, busy: bool) -> Result<Capacity> {
-        let available = resources::available().context("cannot measure memory")?;
+        let available =
+            resources::available_for(&self.config.device).context("cannot measure memory")?;
         let budget = self
             .config
             .memory_budget_mib
@@ -244,6 +245,7 @@ impl Manager {
                         shard.file_bytes,
                         shard.end - shard.start,
                         self.config.memory_budget_mib,
+                        &self.config.device,
                     )?;
                     let mut cmd = Command::new(std::env::current_exe()?);
                     cmd.arg("--token-file")

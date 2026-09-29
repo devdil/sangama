@@ -74,7 +74,7 @@ See [the detailed architecture](docs/architecture.md) for source files, request 
 
 ## What works today
 
-- Real Qwen text generation using CPU or Apple Metal.
+- Real Qwen text generation using CPU, Apple Metal or NVIDIA CUDA, with CPU, Metal and CUDA workers able to share one route.
 - Workers that load only their assigned physical shard files.
 - Peer identity verification, single-use invitations, expiring membership and revocation.
 - Encrypted libp2p connections, a controlled relay and signed DHT discovery.
@@ -104,7 +104,7 @@ python3 scripts/fetch-qwen.py
   --max-tokens 40
 ```
 
-On an Apple Silicon Mac, build with `--features metal` and run with `--device metal` to use the GPU.
+To use a GPU, build with `--features metal` and run with `--device metal` on an Apple Silicon Mac, or build with `--features cuda` and run with `--device cuda` on a Linux machine with an NVIDIA GPU. The CUDA build needs the NVIDIA driver and the CUDA toolkit (`nvcc` on `PATH`); set `CUDA_VISIBLE_DEVICES` to choose a GPU. See [GPU testing](docs/gpu-testing.md) for running workers on separate GPUs or MIG slices.
 
 To open the local UI with the CPU build:
 
@@ -126,7 +126,7 @@ Follow [the invited-network guide](docs/admitted-mesh.md) and [UI workflow](docs
 
 ## Current limits
 
-The supported model is pinned Qwen2.5-0.5B-Instruct, using F32 weights and greedy token selection. Workers currently serve one conversation at a time, and a route uses a matching backend type. Quantization, phone clients, arbitrary models and automatic shard downloads are not implemented.
+The supported model is pinned Qwen2.5-0.5B-Instruct, using F32 weights and greedy token selection. Workers currently serve one conversation at a time. CUDA support has not yet been validated on NVIDIA hardware. Quantization, phone clients, arbitrary models and automatic shard downloads are not implemented.
 
 If a worker disconnects, the active request fails. Recovery starts a new session; the old KV cache is not migrated automatically.
 
@@ -142,6 +142,7 @@ Use trusted participants. Encryption protects traffic in transit, but a worker c
 | [Architecture](docs/architecture.md) | Components, protocols and execution lifecycle |
 | [Network setup](docs/admitted-mesh.md) | Membership, relay configuration and managed workers |
 | [Portal deployment](deploy/portal/README.md) | Hosted UI and private PostgreSQL |
+| [GPU testing](docs/gpu-testing.md) | GPU slices (MIG) in containers, and why Mac containers cannot use Metal |
 | [Generation and verification](docs/generation.md) | Model files, generation and independent correctness checks |
 | [Portal accounts](docs/portal-accounts.md) | Invite-only signup and sign-in |
 | [Credits](docs/credits.md) | How contribution is counted, matched and enforced |

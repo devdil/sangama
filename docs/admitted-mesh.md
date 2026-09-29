@@ -55,8 +55,8 @@ must not appear in command arguments, Git, browser URLs, or test reports.
 
 ## A node configuration
 
-Build on a Mac with `./scripts/cargo build --release --features metal`. Linux CPU
-workers omit `--features metal`. Use absolute paths in configuration files.
+Build on a Mac with `./scripts/cargo build --release --features metal`, or on an NVIDIA Linux
+machine with `--features cuda` and `"device": "cuda"`. Linux CPU workers omit both features. Use absolute paths in configuration files.
 
 ```sh
 target/release/sangama mesh-identity --state-dir .mesh/alice

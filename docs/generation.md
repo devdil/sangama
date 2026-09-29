@@ -14,7 +14,7 @@ worker identity/range validation, bounded binary transport, greedy selection, an
 | Verification client | metadata/tokenizer plus original model.safetensors; shards if starting workers |
 
 Use `--model-dir` to select the appropriate directory. For `generate --peers`, `--device` is the expected
-worker backend, not a request to load a model on the client. A CPU-only client build can request Metal workers.
+worker backend, not a request to load a model on the client. A CPU-only client build can request Metal or CUDA workers. Remote workers may each use a different backend; the client checks only that each reports a supported one.
 Workers are loopback-only and token-authenticated. Remote traffic can use admitted encrypted mesh
 bridges or the older private SSH tunnel setup. Managed mesh workers can load prepared shards on request;
 see [mesh allocation](admitted-mesh.md#placement-reservations-and-opencode).

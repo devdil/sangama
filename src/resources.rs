@@ -1,4 +1,4 @@
-//! Conservative host/cgroup memory observation for the supported F32 Qwen worker.
+//! Conservative host/cgroup and GPU memory observation for the supported F32 Qwen worker.
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Memory {
@@ -104,14 +104,59 @@ pub fn available() -> Option<u64> {
         None
     }
 }
+/// Memory available to a worker on `device`. CUDA reports the free memory of the GPU,
+/// MIG slice or MPS partition the worker will use. Metal shares host memory but caps a
+/// process at its recommended working set, so a Metal budget is bounded by both.
+pub fn available_for(device: &str) -> Option<u64> {
+    match device {
+        "cuda" => cuda_available(),
+        "metal" => {
+            let gpu = metal_available()?;
+            Some(available().map_or(gpu, |host| host.min(gpu)))
+        }
+        _ => available(),
+    }
+}
+#[cfg(feature = "cuda")]
+fn cuda_available() -> Option<u64> {
+    // Ordinal 0 is the first CUDA_VISIBLE_DEVICES entry, which may be a MIG slice.
+    let context = candle::cuda_backend::cudarc::driver::CudaContext::new(0).ok()?;
+    let (free, _total) = context.mem_get_info().ok()?;
+    Some(free as u64)
+}
+#[cfg(not(feature = "cuda"))]
+fn cuda_available() -> Option<u64> {
+    None
+}
+#[cfg(feature = "metal")]
+fn metal_available() -> Option<u64> {
+    let candle::Device::Metal(device) = candle::Device::new_metal(0).ok()? else {
+        return None;
+    };
+    let device = device.metal_device();
+    Some(
+        device
+            .recommended_max_working_set_size()
+            .saturating_sub(device.current_allocated_size()) as u64,
+    )
+}
+#[cfg(not(feature = "metal"))]
+fn metal_available() -> Option<u64> {
+    None
+}
 pub fn estimate(file_bytes: u64, layers: usize) -> u64 {
     // Pinned BF16 checkpoint is expanded to F32. KV: K+V, 4096 positions,
     // two KV heads, head dimension 64, four bytes; allow 384 MiB workspace.
     file_bytes.saturating_mul(2) + (layers as u64) * 2 * 4096 * 2 * 64 * 4 + 384 * 1024 * 1024
 }
-pub fn check(file_bytes: u64, layers: usize, budget_mib: Option<u64>) -> anyhow::Result<Memory> {
-    let available = available()
-        .ok_or_else(|| anyhow::anyhow!("cannot measure available memory on this host"))?;
+pub fn check(
+    file_bytes: u64,
+    layers: usize,
+    budget_mib: Option<u64>,
+    device: &str,
+) -> anyhow::Result<Memory> {
+    let available = available_for(device)
+        .ok_or_else(|| anyhow::anyhow!("cannot measure available {device} memory on this host"))?;
     let budget = budget_mib
         .map(|m| m.saturating_mul(1024 * 1024))
         .unwrap_or(available / 5 * 4)
@@ -130,13 +175,27 @@ pub fn check(file_bytes: u64, layers: usize, budget_mib: Option<u64>) -> anyhow:
     })
 }
 
-#[cfg(all(
-    test,
-    any(target_os = "linux", target_os = "macos", target_os = "windows")
-))]
+#[cfg(test)]
 mod tests {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn measures_native_available_memory() {
         assert!(super::available().is_some_and(|bytes| bytes > 0));
+        assert!(super::available_for("cpu").is_some_and(|bytes| bytes > 0));
+    }
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn cuda_memory_needs_cuda_build() {
+        assert_eq!(super::available_for("cuda"), None);
+    }
+    #[cfg(feature = "metal")]
+    #[test]
+    fn metal_budget_is_bounded_by_working_set() {
+        let candle::Device::Metal(device) = candle::Device::new_metal(0).unwrap() else {
+            unreachable!()
+        };
+        let working_set = device.metal_device().recommended_max_working_set_size() as u64;
+        let budget = super::available_for("metal").unwrap();
+        assert!(budget > 0 && budget <= working_set);
     }
 }
