@@ -24,7 +24,15 @@ fn main() {
     let on_off = |on: bool| if on { "ON" } else { "OFF" };
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
 
-    let dst = cmake::Config::new(&source)
+    // One binary for mixed GPUs: e.g. SANGAMA_CUDA_ARCHS="86;89;120" for RTX 3090, 4090 and
+    // 5090. Unset, llama.cpp builds only for the GPU on the build machine.
+    println!("cargo:rerun-if-env-changed=SANGAMA_CUDA_ARCHS");
+    let mut config = cmake::Config::new(&source);
+    if let Ok(archs) = env::var("SANGAMA_CUDA_ARCHS") {
+        config.define("CMAKE_CUDA_ARCHITECTURES", archs);
+        config.define("GGML_NATIVE", "OFF");
+    }
+    let dst = config
         .profile("Release")
         .define("BUILD_SHARED_LIBS", "OFF")
         .define("LLAMA_BUILD_COMMON", "OFF")
