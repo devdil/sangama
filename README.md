@@ -1,5 +1,7 @@
 # Sangama
 
+[![Rust checks](https://github.com/devdil/sangama/actions/workflows/ci.yml/badge.svg)](https://github.com/devdil/sangama/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Sangama (संगम)** means confluence: devices coming together to run one AI model.
 
 Sangama is a Rust project that lets computers share the work of running a language model. Each participating computer loads a piece of the model and passes its results to the next computer.
@@ -160,3 +162,7 @@ sangama-code
 This installs a user-level command on macOS/Linux. It starts local workers automatically and opens
 OpenCode in the current directory. The current model supports text suggestions; file editing and tools
 are disabled. See [installation and remote-worker options](docs/opencode.md).
+
+## License
+
+Sangama is released under the [MIT License](LICENSE). Third-party code keeps its own license; see [third-party notices](third_party/NOTICE.md). Qwen checkpoints are downloaded separately under their upstream license.

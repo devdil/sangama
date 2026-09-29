@@ -87,6 +87,12 @@ Record what passed, the backend/hardware, and any untested paths. Do not turn a 
 
 Generated weights, keys, `.mesh/`, `.tools/`, `runs/` and `work/` are ignored. Publish only reviewed, non-secret reports under `docs/test-results/`. Follow the repository owner's sharing instructions; the current development workflow keeps changes local and does not push.
 
+## Community and licensing
+
+By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security problems privately as described in [SECURITY.md](SECURITY.md), not in public issues.
+
+Contributions are accepted under the project's [MIT License](LICENSE): by submitting a pull request you agree your change is licensed under the same terms.
+
 ## Troubleshooting
 
 - **No complete route:** ensure every prepared shard is present on some eligible worker, budgets fit, and all workers match the manifest/backend. Use `mesh-allocate` for unloaded managed nodes and `mesh-plan` for loaded ones.
