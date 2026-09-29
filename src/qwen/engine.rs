@@ -28,6 +28,40 @@ impl Engine {
         }
     }
 
+    /// Final stage: the greedy next token after each position, to verify drafted tokens.
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn greedy(
+        &mut self,
+        tokens: &[u32],
+        values: &[f32],
+        seq_len: usize,
+        position: usize,
+    ) -> Result<Vec<u32>> {
+        match self {
+            Engine::Candle(_) => anyhow::bail!("speculative decoding needs the llama.cpp engine"),
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => Ok(stage.greedy(tokens, values, seq_len, position)?),
+        }
+    }
+
+    /// The session's cached state, to roll back rejected drafts.
+    pub fn save_state(&mut self) -> Result<Vec<u8>> {
+        match self {
+            Engine::Candle(_) => anyhow::bail!("speculative decoding needs the llama.cpp engine"),
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => Ok(stage.save_state()?),
+        }
+    }
+
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn load_state(&mut self, state: &[u8]) -> Result<()> {
+        match self {
+            Engine::Candle(_) => anyhow::bail!("speculative decoding needs the llama.cpp engine"),
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => Ok(stage.load_state(state)?),
+        }
+    }
+
     pub fn clear(&mut self) {
         match self {
             Engine::Candle(model) => model.clear(),

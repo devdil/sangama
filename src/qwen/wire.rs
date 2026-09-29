@@ -50,6 +50,11 @@ pub struct Header {
     /// stages still compute in F32.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bf16: bool,
+    /// The tokens after the first are drafts to verify. Every stage keeps a snapshot so it
+    /// can roll back rejected drafts, and the last stage returns the greedy token after
+    /// every position instead of only the last.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub speculative: bool,
     pub model_hash: String,
     pub session: String,
     pub position: usize,
@@ -80,10 +85,19 @@ impl Frame {
 
     pub fn valid_output(&self, vocab_size: usize) -> bool {
         if self.header.sample {
+            let expected = if self.header.speculative {
+                self.header.seq_len
+            } else {
+                1
+            };
             self.header.kind == Kind::Sampled
                 && self.values.is_empty()
-                && self.header.tokens.len() == 1
-                && (self.header.tokens[0] as usize) < vocab_size
+                && self.header.tokens.len() == expected
+                && self
+                    .header
+                    .tokens
+                    .iter()
+                    .all(|&t| (t as usize) < vocab_size)
         } else {
             self.header.kind == Kind::Logits
                 && self.values.len() == vocab_size
@@ -204,6 +218,7 @@ mod tests {
                 sample: false,
                 detached: false,
                 bf16: false,
+                speculative: false,
                 model_hash: "a".into(),
                 session: "s".into(),
                 position: 0,

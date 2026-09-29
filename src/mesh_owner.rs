@@ -284,6 +284,7 @@ mod tests {
                 sample: true,
                 detached: false,
                 bf16: false,
+                speculative: false,
                 model_hash: "h".into(),
                 session: session.into(),
                 position: 0,

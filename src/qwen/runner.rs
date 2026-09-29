@@ -97,6 +97,13 @@ impl Timing {
     }
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Speculation {
+    pub drafted: usize,
+    pub accepted: usize,
+    pub steps: usize,
+}
+
 #[derive(Serialize)]
 pub struct Report {
     pub operation: &'static str,
@@ -123,8 +130,10 @@ pub struct Report {
     pub workers: Vec<Info>,
     pub last_trace: Vec<Trace>,
     /// The first token's trace: the last prompt chunk through every stage.
-    #[serde(default)]
     pub first_trace: Vec<Trace>,
+    /// Drafted tokens sent for verification, how many the model agreed with, and the number
+    /// of route passes (each yields at least one token).
+    pub speculation: Speculation,
     /// Where each token's time went: compute per stage vs everything else (network, relay).
     pub breakdown: Breakdown,
     pub notes: Vec<&'static str>,
@@ -388,6 +397,7 @@ fn request(
     tokens: &[u32],
     position: usize,
     sample: bool,
+    speculative: bool,
 ) -> Frame {
     Frame {
         header: Header {
@@ -396,6 +406,7 @@ fn request(
             // Generation needs only the sampled token, which the last stage keeps for us.
             detached: sample,
             bf16: sample,
+            speculative,
             model_hash: model_hash.into(),
             session: session.into(),
             position,
@@ -411,6 +422,37 @@ fn request(
 
 /// Sends one frame through the route. A detached frame returns the first stage's acknowledgement
 /// unless `collect`, which waits for the last stage's result.
+/// Tokens drafted per step for speculative decoding; `SANGAMA_SPECULATE` overrides it, 0 disables.
+fn speculation() -> usize {
+    std::env::var("SANGAMA_SPECULATE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| *v <= 16)
+        .unwrap_or(0)
+}
+
+/// Drafts up to `k` tokens by prompt lookup: find the latest earlier occurrence of the last
+/// few tokens (4, 3, then 2) and propose what followed it. Summaries and code repeat their
+/// input, so this costs nothing and is often right.
+fn lookup(context: &[u32], k: usize) -> Vec<u32> {
+    for n in (2..=4).rev() {
+        if k == 0 || context.len() <= n {
+            continue;
+        }
+        let tail = &context[context.len() - n..];
+        for start in (0..context.len() - n).rev() {
+            if &context[start..start + n] == tail {
+                let from = start + n;
+                let to = (from + k).min(context.len());
+                if from < to {
+                    return context[from..to].to_vec();
+                }
+            }
+        }
+    }
+    vec![]
+}
+
 /// Prompt tokens per pipelined chunk; `SANGAMA_PREFILL_CHUNK` overrides it for measurements.
 fn prefill_chunk() -> usize {
     std::env::var("SANGAMA_PREFILL_CHUNK")
@@ -666,7 +708,7 @@ async fn execute_chat(
             let _ = step(
                 &http,
                 &options.token,
-                &request(&model_hash, &session, &route, &prompt, 0, false),
+                &request(&model_hash, &session, &route, &prompt, 0, false, false),
                 vocab_size,
                 true,
             )
@@ -682,16 +724,31 @@ async fn execute_chat(
         let mut first_trace = None;
         let mut token_stage_ms: Vec<Vec<f64>> = Vec::new();
         let mut finish_reason = "max_tokens";
+        let (mut drafted, mut kept, mut steps) = (0usize, 0usize, 0usize);
         let limit = local.as_ref().map_or(options.max_tokens, |b| b.ids.len());
-        for index in 0..limit {
-            let context = if ids.is_empty() {
-                prompt.as_slice()
-            } else {
-                &ids[ids.len() - 1..]
+        let speculate = if verify { 0 } else { speculation() };
+        'generate: while ids.len() < limit {
+            // After the prompt, each step sends the last token plus any drafts to verify.
+            let drafts = match ids.last() {
+                Some(_) if speculate > 0 => {
+                    let room = (limit - ids.len() - 1).min(CONTEXT_LIMIT - position - 1);
+                    let seen: Vec<u32> = prompt.iter().chain(&ids).copied().collect();
+                    lookup(&seen, speculate.min(room))
+                }
+                _ => vec![],
             };
+            let step_context: Vec<u32>;
+            let context = match ids.last() {
+                None => prompt.as_slice(),
+                Some(&id) => {
+                    step_context = std::iter::once(id).chain(drafts.iter().copied()).collect();
+                    &step_context
+                }
+            };
+            let start = position;
             let now = Instant::now();
             let mut last: Option<Frame> = None;
-            // Compute time each stage spent on this token, summed over prompt chunks.
+            // Compute time each stage spent on this step, summed over prompt chunks.
             let mut stage_ms = vec![0.0; route.len()];
             let chunks = context.chunks(chunk_tokens).count();
             for (n, chunk) in context.chunks(chunk_tokens).enumerate() {
@@ -700,14 +757,17 @@ async fn execute_chat(
                 }
                 // Detached prompt chunks are pipelined: the next chunk enters the first stage
                 // while earlier ones are still moving down the route. Only the last is collected.
-                let response = step(
-                    &http,
-                    &options.token,
-                    &request(&model_hash, &session, &route, chunk, position, !verify),
-                    vocab_size,
-                    n + 1 == chunks,
-                )
-                .await?;
+                let frame = request(
+                    &model_hash,
+                    &session,
+                    &route,
+                    chunk,
+                    position,
+                    !verify,
+                    !drafts.is_empty(),
+                );
+                let response =
+                    step(&http, &options.token, &frame, vocab_size, n + 1 == chunks).await?;
                 for trace in &response.header.trace {
                     if let Some(total) = stage_ms.get_mut(trace.shard) {
                         *total += trace.forward_ms;
@@ -716,41 +776,67 @@ async fn execute_chat(
                 last = Some(response);
                 position += chunk.len();
             }
-            token_stage_ms.push(stage_ms);
             let result = last.context("empty context")?;
-            let id = if result.header.sample {
-                result.header.tokens[0]
+            // Keep the drafts up to the first one the model disagrees with, then its own token.
+            let produced = if !drafts.is_empty() {
+                let greedy = &result.header.tokens;
+                let accepted = drafts
+                    .iter()
+                    .zip(greedy)
+                    .take_while(|(draft, model)| draft == model)
+                    .count();
+                drafted += drafts.len();
+                kept += accepted;
+                position = start + 1 + accepted;
+                let mut produced = drafts[..accepted].to_vec();
+                produced.push(greedy[accepted]);
+                produced
+            } else if result.header.sample {
+                vec![result.header.tokens[0]]
             } else {
-                greedy(&result.values)?
+                vec![greedy(&result.values)?]
             };
-            times.push(now.elapsed().as_secs_f64() * 1000.0);
+            steps += 1;
+            let share = now.elapsed().as_secs_f64() * 1000.0 / produced.len() as f64;
+            let stage_share: Vec<f64> = stage_ms
+                .iter()
+                .map(|ms| ms / produced.len() as f64)
+                .collect();
             if first_trace.is_none() {
                 first_trace = Some(result.header.trace.clone());
             }
-            last_trace = result.header.trace;
-            ids.push(id);
-            if let Some(sender) = &deltas
-                && let Some(delta) = decoder
-                    .step(id)
-                    .map_err(|e| anyhow::anyhow!("stream decode: {e}"))?
-            {
-                sender
-                    .send(delta)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("client disconnected"))?;
-            }
-            if let Some(local) = &local {
-                for (got, expected) in result.values.iter().zip(&local.logits[index]) {
-                    maximum_error = maximum_error.max((got - expected).abs());
-                }
-                if id != local.ids[index] {
-                    finish_reason = "verification_mismatch";
+            last_trace = result.header.trace.clone();
+            for id in produced {
+                if ids.len() >= limit {
                     break;
                 }
-            }
-            if eos.contains(&id) {
-                finish_reason = "eos";
-                break;
+                let index = ids.len();
+                times.push(share);
+                token_stage_ms.push(stage_share.clone());
+                ids.push(id);
+                if let Some(sender) = &deltas
+                    && let Some(delta) = decoder
+                        .step(id)
+                        .map_err(|e| anyhow::anyhow!("stream decode: {e}"))?
+                {
+                    sender
+                        .send(delta)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("client disconnected"))?;
+                }
+                if let Some(local) = &local {
+                    for (got, expected) in result.values.iter().zip(&local.logits[index]) {
+                        maximum_error = maximum_error.max((got - expected).abs());
+                    }
+                    if id != local.ids[index] {
+                        finish_reason = "verification_mismatch";
+                        break 'generate;
+                    }
+                }
+                if eos.contains(&id) {
+                    finish_reason = "eos";
+                    break 'generate;
+                }
             }
         }
         Ok((
@@ -761,11 +847,16 @@ async fn execute_chat(
             first_trace.unwrap_or_default(),
             finish_reason,
             token_stage_ms,
+            Speculation {
+                drafted,
+                accepted: kept,
+                steps,
+            },
         ))
     }
     .await;
     let cleanup = reset(&http, &addresses, &options.token, &session).await;
-    let (ids, times, maximum_error, trace, first_trace, finish_reason, token_stage_ms) =
+    let (ids, times, maximum_error, trace, first_trace, finish_reason, token_stage_ms, speculation) =
         measurement?;
     let breakdown = Breakdown::new(&times, &token_stage_ms, &trace);
     cleanup?;
@@ -813,6 +904,7 @@ async fn execute_chat(
         workers: infos,
         last_trace: trace,
         first_trace,
+        speculation,
         breakdown,
         notes: vec![
             if verify {
@@ -833,4 +925,22 @@ async fn execute_chat(
     };
     drop(processes);
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lookup;
+
+    #[test]
+    fn lookup_drafts_what_followed_the_latest_earlier_match() {
+        // "... 7 8 9 | 10 11 ... 7 8" drafts what followed the last "7 8".
+        let context = [1, 7, 8, 9, 10, 11, 2, 7, 8];
+        assert_eq!(lookup(&context, 3), vec![9, 10, 11]);
+        assert_eq!(lookup(&context, 1), vec![9]);
+        // No earlier match of two or more tokens, or nothing asked for: no drafts.
+        assert!(lookup(&[1, 2, 3, 4], 4).is_empty());
+        assert!(lookup(&context, 0).is_empty());
+        // Drafts stop at the end of the context.
+        assert_eq!(lookup(&[5, 6, 5, 6], 8), vec![5, 6]);
+    }
 }

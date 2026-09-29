@@ -46,6 +46,19 @@ unsafe extern "C" {
         err: *mut c_char,
         err_len: usize,
     ) -> c_int;
+    fn sg_stage_decode_greedy(
+        stage: *mut RawStage,
+        tokens: *const i32,
+        hidden: *const f32,
+        n: c_int,
+        pos: c_int,
+        ids: *mut i32,
+        err: *mut c_char,
+        err_len: usize,
+    ) -> c_int;
+    fn sg_stage_state_size(stage: *mut RawStage) -> usize;
+    fn sg_stage_state_save(stage: *mut RawStage, buf: *mut u8, len: usize) -> usize;
+    fn sg_stage_state_load(stage: *mut RawStage, buf: *const u8, len: usize) -> usize;
     fn sg_stage_clear(stage: *mut RawStage);
     fn sg_stage_free(stage: *mut RawStage);
 }
@@ -190,6 +203,27 @@ impl Stage {
         }
     }
 
+    /// Checks a stage's input and converts tokens for llama.cpp.
+    fn input(&self, tokens: &[u32], hidden: &[f32], seq_len: usize) -> Result<Vec<i32>> {
+        if seq_len == 0 {
+            return Err(Error("empty sequence".into()));
+        }
+        if self.is_first() {
+            if tokens.len() != seq_len {
+                return Err(Error("first stage needs one token per position".into()));
+            }
+            tokens
+                .iter()
+                .map(|&t| i32::try_from(t).map_err(|_| Error("token out of range".into())))
+                .collect::<Result<_>>()
+        } else {
+            if hidden.len() != seq_len * self.embd {
+                return Err(Error("hidden state size mismatch".into()));
+            }
+            Ok(Vec::new())
+        }
+    }
+
     /// Runs `seq_len` positions from `position`. The first stage reads `tokens`, later stages
     /// read `hidden` (`seq_len * hidden_size` values).
     pub fn forward(
@@ -199,23 +233,7 @@ impl Stage {
         seq_len: usize,
         position: usize,
     ) -> Result<Vec<f32>> {
-        if seq_len == 0 {
-            return Err(Error("empty sequence".into()));
-        }
-        let tokens: Vec<i32> = if self.is_first() {
-            if tokens.len() != seq_len {
-                return Err(Error("first stage needs one token per position".into()));
-            }
-            tokens
-                .iter()
-                .map(|&t| i32::try_from(t).map_err(|_| Error("token out of range".into())))
-                .collect::<Result<_>>()?
-        } else {
-            if hidden.len() != seq_len * self.embd {
-                return Err(Error("hidden state size mismatch".into()));
-            }
-            Vec::new()
-        };
+        let tokens = self.input(tokens, hidden, seq_len)?;
         let mut out = vec![
             0f32;
             if self.is_last() {
@@ -252,6 +270,70 @@ impl Stage {
             return Err(Error(message(&err)));
         }
         Ok(out)
+    }
+
+    /// Final stage only: the greedy next token after each of the `seq_len` positions, so a
+    /// client can check several drafted tokens in one pass.
+    pub fn greedy(
+        &mut self,
+        tokens: &[u32],
+        hidden: &[f32],
+        seq_len: usize,
+        position: usize,
+    ) -> Result<Vec<u32>> {
+        let tokens = self.input(tokens, hidden, seq_len)?;
+        let mut ids = vec![0i32; seq_len];
+        let mut err = [0 as c_char; 256];
+        let int = |v: usize| c_int::try_from(v).map_err(|_| Error("parameter too large".into()));
+        // SAFETY: ids holds seq_len values; inputs match the sizes checked in `input`.
+        let rc = unsafe {
+            sg_stage_decode_greedy(
+                self.raw,
+                if self.is_first() {
+                    tokens.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
+                if self.is_first() {
+                    std::ptr::null()
+                } else {
+                    hidden.as_ptr()
+                },
+                int(seq_len)?,
+                int(position)?,
+                ids.as_mut_ptr(),
+                err.as_mut_ptr(),
+                err.len(),
+            )
+        };
+        if rc != 0 {
+            return Err(Error(message(&err)));
+        }
+        Ok(ids.into_iter().map(|id| id as u32).collect())
+    }
+
+    /// The sequence's cached state (attention KV and recurrent state).
+    pub fn save_state(&mut self) -> Result<Vec<u8>> {
+        // SAFETY: raw is a live stage; the buffer holds the size llama.cpp reports.
+        unsafe {
+            let mut buf = vec![0u8; sg_stage_state_size(self.raw)];
+            let written = sg_stage_state_save(self.raw, buf.as_mut_ptr(), buf.len());
+            if written == 0 && !buf.is_empty() {
+                return Err(Error("could not save the sequence state".into()));
+            }
+            buf.truncate(written);
+            Ok(buf)
+        }
+    }
+
+    /// Replaces the sequence's state with one from `save_state`.
+    pub fn load_state(&mut self, state: &[u8]) -> Result<()> {
+        // SAFETY: raw is a live stage; llama.cpp reads at most state.len() bytes.
+        let read = unsafe { sg_stage_state_load(self.raw, state.as_ptr(), state.len()) };
+        if read == 0 {
+            return Err(Error("could not restore the sequence state".into()));
+        }
+        Ok(())
     }
 
     /// Drops the KV cache so a new session can start at position zero.

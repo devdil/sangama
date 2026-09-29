@@ -6,7 +6,7 @@ use crate::{
     protocol::{url, validate_address},
     server,
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use axum::{
     Json, Router,
     body::Bytes,
@@ -65,6 +65,15 @@ struct Session {
     id: String,
     position: usize,
     used: Instant,
+    /// The state before the latest speculative batch, and that batch's inputs.
+    draft: Option<Draft>,
+}
+struct Draft {
+    position: usize,
+    state: Vec<u8>,
+    tokens: Vec<u32>,
+    values: Vec<f32>,
+    seq_len: usize,
 }
 struct Resident {
     model: Engine,
@@ -367,6 +376,7 @@ async fn reserve(State(state): State<Worker>, Json(request): Json<Reset>) -> Res
                     id: request.session,
                     position: 0,
                     used: Instant::now(),
+                    draft: None,
                 });
             }
             Json(serde_json::json!({"reserved":true,"lease_seconds":60})).into_response()
@@ -479,30 +489,74 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
             resident.session = None;
         }
         let h = &frame.header;
-        if let Some(session) = &resident.session {
+        let resident = &mut *resident;
+        if let Some(session) = &mut resident.session {
             ensure!(
-                session.id == h.session && session.position == h.position,
+                session.id == h.session,
                 "session mismatch or out-of-order position; reset required"
             );
-        } else {
-            ensure!(h.position == 0, "new session must begin at position zero");
-        }
-        let started = Instant::now();
-        let started_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
-        let mut values =
-            match resident
-                .model
-                .forward(&h.tokens, &frame.values, h.seq_len, h.position)
-            {
-                Ok(values) => values,
-                Err(error) => {
+            let previous = session.draft.take();
+            if session.position != h.position {
+                // The client accepted only part of the last speculative batch: restore the state
+                // from before it and replay the accepted inputs, which this stage kept.
+                let d = previous
+                    .filter(|d| d.position < h.position && h.position < d.position + d.seq_len)
+                    .context("session mismatch or out-of-order position; reset required")?;
+                let keep = h.position - d.position;
+                let width = d.values.len() / d.seq_len;
+                let replayed = resident.model.load_state(&d.state).and_then(|()| {
+                    resident.model.forward(
+                        &d.tokens[..d.tokens.len().min(keep)],
+                        &d.values[..(keep * width).min(d.values.len())],
+                        keep,
+                        d.position,
+                    )
+                });
+                if let Err(error) = replayed {
                     resident.model.clear();
                     resident.session = None;
                     return Err(error);
                 }
-            };
+                session.position = h.position;
+            }
+        } else {
+            ensure!(h.position == 0, "new session must begin at position zero");
+        }
+        let draft = if h.speculative {
+            Some(Draft {
+                position: h.position,
+                state: resident.model.save_state()?,
+                tokens: h.tokens.clone(),
+                values: frame.values.clone(),
+                seq_len: h.seq_len,
+            })
+        } else {
+            None
+        };
+        let started = Instant::now();
+        let started_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+        let last = h.route.len() == 1;
+        let computed = if last && h.sample && h.speculative {
+            resident
+                .model
+                .greedy(&h.tokens, &frame.values, h.seq_len, h.position)
+                .map(|ids| (Some(ids), vec![]))
+        } else {
+            resident
+                .model
+                .forward(&h.tokens, &frame.values, h.seq_len, h.position)
+                .map(|values| (None, values))
+        };
+        let (drafted, mut values) = match computed {
+            Ok(result) => result,
+            Err(error) => {
+                resident.model.clear();
+                resident.session = None;
+                return Err(error);
+            }
+        };
         if let Some(ms) = simulated_ms_per_layer_token() {
             let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
             std::thread::sleep(Duration::from_secs_f64(
@@ -514,6 +568,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
             id: h.session.clone(),
             position: h.position + h.seq_len,
             used: Instant::now(),
+            draft,
         });
         let mut header = frame.header;
         header.tokens.clear();
@@ -530,7 +585,10 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
         } else {
             Kind::Hidden
         };
-        if header.route.is_empty() && header.sample {
+        if let Some(ids) = drafted {
+            header.tokens = ids;
+            header.kind = Kind::Sampled;
+        } else if header.route.is_empty() && header.sample {
             ensure!(
                 values.len() == worker.manifest.vocab_size()
                     && values.iter().all(|v| v.is_finite()),

@@ -141,18 +141,16 @@ int sg_stage_architecture(const sg_stage * s, char * buf, size_t len) {
     return llama_model_meta_val_str(s->model, "general.architecture", buf, len);
 }
 
-// Runs n positions starting at pos. The first stage takes tokens, later stages take
-// n * n_embd hidden values. A non-final stage writes n * n_embd hidden values to out; the
-// final stage writes the logits of the last position (n_vocab values).
-int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
-                    float * out, size_t out_len, char * err, size_t err_len) {
+// Decodes n positions starting at pos. all_logits asks the final stage for every position's
+// logits rather than only the last.
+static int run(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
+               int all_logits, char * err, size_t err_len) {
     const int last = s->il_end == s->n_layer;
-    const size_t expected = last ? (size_t) s->n_vocab : (size_t) n * (size_t) s->n_embd;
-    if (n <= 0 || out_len != expected) {
-        snprintf(err, err_len, "bad decode size: n=%d out_len=%zu expected=%zu", n, out_len, expected);
+    const int takes_tokens = s->il_beg == 0;
+    if (n <= 0) {
+        snprintf(err, err_len, "bad decode size: n=%d", n);
         return -1;
     }
-    const int takes_tokens = s->il_beg == 0;
     if ((takes_tokens && !tokens) || (!takes_tokens && !hidden)) {
         snprintf(err, err_len, "stage input mismatch: %s expected", takes_tokens ? "tokens" : "hidden states");
         return -1;
@@ -176,13 +174,30 @@ int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, 
     for (int i = 0; i < n; ++i) {
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = 0;
-        batch.logits[i] = last ? (i == n - 1) : 1;
+        batch.logits[i] = last ? (all_logits || i == n - 1) : 1;
     }
     batch.n_tokens = n;
     const int rc = llama_decode(s->ctx, batch);
     llama_batch_free(batch);
     if (rc != 0) {
         snprintf(err, err_len, "llama_decode failed with %d", rc);
+        return -1;
+    }
+    return 0;
+}
+
+// Runs n positions starting at pos. The first stage takes tokens, later stages take
+// n * n_embd hidden values. A non-final stage writes n * n_embd hidden values to out; the
+// final stage writes the logits of the last position (n_vocab values).
+int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
+                    float * out, size_t out_len, char * err, size_t err_len) {
+    const int last = s->il_end == s->n_layer;
+    const size_t expected = last ? (size_t) s->n_vocab : (size_t) n * (size_t) s->n_embd;
+    if (n <= 0 || out_len != expected) {
+        snprintf(err, err_len, "bad decode size: n=%d out_len=%zu expected=%zu", n, out_len, expected);
+        return -1;
+    }
+    if (run(s, tokens, hidden, n, pos, 0, err, err_len) != 0) {
         return -1;
     }
     const float * result = last ? llama_get_logits_ith(s->ctx, n - 1) : llama_get_embeddings(s->ctx);
@@ -192,6 +207,43 @@ int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, 
     }
     memcpy(out, result, expected * sizeof(float));
     return 0;
+}
+
+// Final stage only: the greedy next token after each of the n positions, to verify drafts.
+int sg_stage_decode_greedy(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
+                           int32_t * ids, char * err, size_t err_len) {
+    if (s->il_end != s->n_layer) {
+        snprintf(err, err_len, "only the final stage samples");
+        return -1;
+    }
+    if (run(s, tokens, hidden, n, pos, 1, err, err_len) != 0) {
+        return -1;
+    }
+    for (int i = 0; i < n; ++i) {
+        const float * logits = llama_get_logits_ith(s->ctx, i);
+        if (!logits) {
+            snprintf(err, err_len, "llama.cpp returned no logits for position %d", i);
+            return -1;
+        }
+        int best = 0;
+        for (int v = 1; v < s->n_vocab; ++v) {
+            if (logits[v] > logits[best]) {
+                best = v;
+            }
+        }
+        ids[i] = best;
+    }
+    return 0;
+}
+
+// The sequence's cached state (attention KV and recurrent state), to roll back rejected drafts.
+size_t sg_stage_state_size(sg_stage * s) { return llama_state_seq_get_size(s->ctx, 0); }
+size_t sg_stage_state_save(sg_stage * s, uint8_t * buf, size_t len) {
+    return llama_state_seq_get_data(s->ctx, buf, len, 0);
+}
+// Replaces the sequence's state with a saved one; returns 0 on failure.
+size_t sg_stage_state_load(sg_stage * s, const uint8_t * buf, size_t len) {
+    return llama_state_seq_set_data(s->ctx, buf, len, 0);
 }
 
 void sg_stage_clear(sg_stage * s) { llama_memory_clear(llama_get_memory(s->ctx), true); }
