@@ -21,11 +21,10 @@ pub fn available() -> Option<u64> {
         if let (Ok(limit), Ok(used)) = (
             std::fs::read_to_string("/sys/fs/cgroup/memory.max"),
             std::fs::read_to_string("/sys/fs/cgroup/memory.current"),
-        ) {
-            if let (Ok(limit), Ok(used)) = (limit.trim().parse::<u64>(), used.trim().parse::<u64>())
-            {
-                available = available.min(limit.saturating_sub(used));
-            }
+        ) && let (Ok(limit), Ok(used)) =
+            (limit.trim().parse::<u64>(), used.trim().parse::<u64>())
+        {
+            available = available.min(limit.saturating_sub(used));
         }
         Some(available)
     }

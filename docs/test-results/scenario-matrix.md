@@ -68,7 +68,7 @@ Workers only listen on loopback; cross-machine hops use SSH tunnels (see [secure
 | C5 | Same-region pair (two hosts in one metro) | Two E2-class hosts | F32 reference; compare tokens/s with C1 | Blocked: needs a second host |
 | C6 | Intercontinental pair (US ↔ Europe or Asia datacenter) | Two datacenter hosts | F32 reference; tokens/s | Blocked: needs a second host |
 | C7 | Two home networks behind NAT, admitted mesh with relay | Two home machines | F32 reference; relay vs direct path | Blocked: the long-standing two-home-network milestone |
-| C8 | Mac ↔ US box through a relay on the Linode server | E1 + E2 + Linode | F32 reference; compare with C1 | Blocked: the Linode runs only the portal (ports 22, 80, 443); deploying a relay needs approval |
+| C8 | Linode client → relay → Mac Metal → US CUDA, `force_relay`, live portal membership | E1 + E2 + Linode | F32 reference; compare with C1 | Pass after two fixes: 7/7 exact over 242 s, 0.64 tok/s ([relay run](relay-2026-09-29.md)) |
 
 ## D. Containers and GPU slicing
 
@@ -90,6 +90,8 @@ Workers only listen on loopback; cross-machine hops use SSH tunnels (see [secure
 | E-6 | Second client while a worker is busy | E1 or E2 | 409 or busy error; first session unaffected | Pass ([run](gpu-matrix-2026-09-29.md)) |
 | E-7 | Memory budget too small (`--memory-budget-mib` on a managed worker) | E2 | Load refused with required vs budget MiB | Planned |
 | E-8 | Tunnel drops mid-generation across the WAN | E1 + E2 | Request fails cleanly; no partial output | Planned |
+| E-9 | Several sessions on one Candle CUDA worker | E2 | Every session succeeds | Pass after fix; sessions 2+ failed with `CUDA_ERROR_INVALID_CONTEXT` before ([relay run](relay-2026-09-29.md)) |
+| E-10 | Request in flight when a relay circuit reaches its limit | E1 + E2 + Linode | No failures during continuous use | Pass after raising circuit limits to 1 h / 1 GiB ([relay run](relay-2026-09-29.md)) |
 
 ## F. Performance baselines
 
