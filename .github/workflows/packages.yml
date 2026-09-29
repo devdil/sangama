@@ -69,7 +69,7 @@ jobs:
           ./packaging/install.ps1 -Version $env:VERSION -ReleaseDir "$pwd/dist" -InstallDir "$env:RUNNER_TEMP/sangama/bin"
           & "$env:RUNNER_TEMP/sangama/bin/sangama.exe" --version
           if ($LASTEXITCODE -ne 0) { throw 'Installed executable failed' }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sangama-${{ matrix.target }}
           path: dist/*
