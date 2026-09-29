@@ -83,6 +83,9 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
     let steps = seen.clone();
     let resets = Arc::new(AtomicUsize::new(0));
     let cleared = resets.clone();
+    // Generation is detached: the stage acknowledges and keeps the result for collection.
+    let kept = Arc::new(Mutex::new(None::<Vec<u8>>));
+    let (keep, collect) = (kept.clone(), kept.clone());
     let app = Router::new()
         .route(
             "/v1/qwen/reserve",
@@ -109,6 +112,7 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
             "/v1/qwen/forward",
             post(move |bytes: Bytes| {
                 let steps = steps.clone();
+                let keep = keep.clone();
                 async move {
                     let mut frame = Frame::decode(&bytes).unwrap();
                     steps
@@ -136,8 +140,21 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
                         frame.header.tokens = vec![id as u32];
                         frame.values.clear();
                     }
+                    if !frame.header.detached {
+                        return frame.encode().unwrap();
+                    }
+                    *keep.lock().unwrap() = Some(frame.encode().unwrap());
+                    frame.header.kind = Kind::Accepted;
+                    frame.header.tokens.clear();
                     frame.encode().unwrap()
                 }
+            }),
+        )
+        .route(
+            "/v1/qwen/result",
+            post(move || {
+                let collect = collect.clone();
+                async move { collect.lock().unwrap().take().unwrap() }
             }),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

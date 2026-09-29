@@ -124,6 +124,7 @@ fn valid_path(path: &str) -> bool {
     [
         "/v1/qwen/info",
         "/v1/qwen/forward",
+        "/v1/qwen/result",
         "/v1/qwen/reset",
         "/v1/qwen/reserve",
         "/v1/node/capacity",
@@ -206,7 +207,7 @@ async fn proxy(
                 StatusCode::from_u16(reply.status).unwrap_or(StatusCode::BAD_GATEWAY),
                 [(
                     "content-type",
-                    if path.ends_with("forward") {
+                    if path.ends_with("forward") || path.ends_with("result") {
                         "application/octet-stream"
                     } else {
                         "application/json"
@@ -387,10 +388,10 @@ async fn worker(
             http.post(url)
                 .header(
                     "content-type",
-                    if request.path.ends_with("reset") || request.path.ends_with("reserve") {
-                        "application/json"
-                    } else {
+                    if request.path.ends_with("forward") {
                         "application/octet-stream"
+                    } else {
+                        "application/json"
                     },
                 )
                 .body(request.body)
@@ -554,7 +555,12 @@ pub async fn run(path: &Path) -> Result<()> {
                 ),
             }
         })?
-        .with_swarm_config(|s| s.with_idle_connection_timeout(Duration::from_secs(180)))
+        .with_swarm_config(|s| {
+            // Send the protocol proposal with the first request data instead of waiting a round
+            // trip for confirmation; every request opens a new substream.
+            s.with_idle_connection_timeout(Duration::from_secs(180))
+                .with_substream_upgrade_protocol_override(libp2p::core::upgrade::Version::V1Lazy)
+        })
         .build();
     let mut allowed = HashSet::new();
     for m in &membership.snapshot.members {

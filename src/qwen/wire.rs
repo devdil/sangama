@@ -26,6 +26,9 @@ pub enum Kind {
     Hidden,
     Logits,
     Sampled,
+    /// A detached stage's reply: it computed and passed the frame on. The trace ends with its
+    /// own entry; the result is collected from the last stage.
+    Accepted,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,6 +37,15 @@ pub struct Header {
     pub protocol: u32,
     #[serde(default)]
     pub sample: bool,
+    /// Each stage replies once it has passed the frame on, and the last stage keeps the
+    /// sampled token for the client to collect. The token then crosses each hop once instead
+    /// of unwinding back through every stage.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detached: bool,
+    /// Hidden states cross the wire as BF16, half the bytes of F32. Qwen is trained in BF16;
+    /// stages still compute in F32.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bf16: bool,
     pub model_hash: String,
     pub session: String,
     pub position: usize,
@@ -50,6 +62,18 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// A detached stage's acknowledgement of `sent`.
+    pub fn accepts(&self, sent: &Header) -> bool {
+        let h = &self.header;
+        h.kind == Kind::Accepted
+            && self.values.is_empty()
+            && h.session == sent.session
+            && h.position == sent.position
+            && h.seq_len == sent.seq_len
+            && h.model_hash == sent.model_hash
+            && h.trace.len() == sent.trace.len() + 1
+    }
+
     pub fn valid_output(&self, vocab_size: usize) -> bool {
         if self.header.sample {
             self.header.kind == Kind::Sampled
@@ -63,22 +87,36 @@ impl Frame {
         }
     }
 
+    /// Bytes per tensor value on the wire.
+    fn width(header: &Header) -> usize {
+        if header.bf16 && header.kind == Kind::Hidden {
+            2
+        } else {
+            4
+        }
+    }
+
     pub fn encode(&self) -> Result<Vec<u8>> {
         let json = serde_json::to_vec(&self.header)?;
         ensure!(json.len() <= MAX_HEADER_BYTES, "header too large");
+        let width = Self::width(&self.header);
         ensure!(
-            self.values.len() <= (MAX_FRAME_BYTES - 4 - json.len()) / 4,
+            self.values.len() <= (MAX_FRAME_BYTES - 4 - json.len()) / width,
             "frame too large"
         );
         ensure!(
             self.values.iter().all(|v| v.is_finite()),
             "non-finite tensor"
         );
-        let mut bytes = Vec::with_capacity(4 + json.len() + self.values.len() * 4);
+        let mut bytes = Vec::with_capacity(4 + json.len() + self.values.len() * width);
         bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&json);
         for value in &self.values {
-            bytes.extend_from_slice(&value.to_le_bytes());
+            if width == 2 {
+                bytes.extend_from_slice(&to_bf16(*value).to_le_bytes());
+            } else {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
         }
         Ok(bytes)
     }
@@ -106,16 +144,32 @@ impl Frame {
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let (header, payload) = Self::split(bytes)?;
-        ensure!(payload.len().is_multiple_of(4), "truncated f32 payload");
-        let values: Vec<_> = payload
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|c| f32::from_le_bytes(*c))
-            .collect();
+        let width = Self::width(&header);
+        ensure!(payload.len().is_multiple_of(width), "truncated payload");
+        let values: Vec<_> = if width == 2 {
+            payload
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| f32::from_bits((u16::from_le_bytes(*c) as u32) << 16))
+                .collect()
+        } else {
+            payload
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
+                .collect()
+        };
         ensure!(values.iter().all(|v| v.is_finite()), "non-finite tensor");
         Ok(Self { header, values })
     }
+}
+
+/// Rounds an F32 to the nearest BF16, ties to even. Values are finite (checked by the caller).
+fn to_bf16(value: f32) -> u16 {
+    let bits = value.to_bits();
+    ((bits + 0x7fff + ((bits >> 16) & 1)) >> 16) as u16
 }
 
 pub async fn response(mut response: reqwest::Response) -> Result<Frame> {
@@ -144,6 +198,8 @@ mod tests {
             header: Header {
                 protocol: 1,
                 sample: false,
+                detached: false,
+                bf16: false,
                 model_hash: "a".into(),
                 session: "s".into(),
                 position: 0,
@@ -168,5 +224,23 @@ mod tests {
         let mut frame = frame;
         frame.values[0] = f32::NAN;
         assert!(frame.encode().is_err());
+    }
+    #[test]
+    fn bf16_hidden_states_halve_the_payload_and_round_to_nearest() {
+        let mut frame = frame();
+        frame.header.bf16 = true;
+        frame.values = vec![0.0, -0.125, 1.25, 1.0 + 1.0 / 256.0 + 1.0 / 1024.0];
+        let bytes = frame.encode().unwrap();
+        let json = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+        assert_eq!(bytes.len() - 4 - json, 2 * frame.values.len());
+        let decoded = Frame::decode(&bytes).unwrap().values;
+        // Exact in BF16, and a value between two BF16 steps rounds to the nearer one.
+        assert_eq!(decoded, vec![0.0, -0.125, 1.25, 1.0 + 1.0 / 128.0]);
+        // Only hidden states are narrowed; logits stay F32.
+        frame.header.kind = Kind::Logits;
+        assert_eq!(
+            Frame::decode(&frame.encode().unwrap()).unwrap().values,
+            frame.values
+        );
     }
 }

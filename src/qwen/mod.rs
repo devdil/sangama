@@ -26,6 +26,11 @@ pub const DEVICES: [&str; 5] = ["cpu", "metal", "cuda", "vulkan", "rocm"];
 /// Most shards (pipeline stages) a route may have. Routes over many small devices need more
 /// than a handful; automatic placement (`mesh-allocate`) is still limited to 8.
 pub const MAX_SHARDS: usize = 32;
+/// How long the last stage holds a result request open. A 4 MB prompt chunk took up to 30 s to
+/// cross 20 relayed hops; this stays below the mesh's 55 s local worker call.
+pub const RESULT_WAIT: std::time::Duration = std::time::Duration::from_secs(50);
+/// The client's limit for collecting a result, just above `RESULT_WAIT`.
+pub const RESULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(58);
 /// Largest completion one request may ask for; prompt plus output must still fit CONTEXT_LIMIT.
 pub const OUTPUT_LIMIT: usize = 512;
 

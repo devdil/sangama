@@ -1,6 +1,6 @@
 use super::{
-    CONTEXT_LIMIT, Manifest, check_hash, config, device, load_manifest, network::Info, weights,
-    wire::*,
+    CONTEXT_LIMIT, Manifest, RESULT_TIMEOUT, check_hash, config, device, load_manifest,
+    network::Info, weights, wire::*,
 };
 use crate::{
     protocol::{url, validate_address},
@@ -390,6 +390,9 @@ fn request(
         header: Header {
             protocol: 1,
             sample,
+            // Generation needs only the sampled token, which the last stage keeps for us.
+            detached: sample,
+            bf16: sample,
             model_hash: model_hash.into(),
             session: session.into(),
             position,
@@ -416,7 +419,22 @@ async fn step(
         .body(frame.encode()?)
         .send()
         .await?;
-    let response = super::wire::response(response).await?;
+    let mut response = super::wire::response(response).await?;
+    if frame.header.detached {
+        ensure!(response.accepts(&frame.header), "invalid acknowledgement");
+        let tail = frame.header.route.last().context("empty route")?.address;
+        let collected = http
+            .post(url(tail, "/v1/qwen/result"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({
+                "session": frame.header.session,
+                "position": frame.header.position,
+            }))
+            .timeout(RESULT_TIMEOUT)
+            .send()
+            .await?;
+        response = super::wire::response(collected).await?;
+    }
     ensure!(
         response.valid_output(vocab_size)
             && response.header.sample == frame.header.sample
@@ -505,8 +523,10 @@ async fn execute_chat(
     };
     let vocab_size = manifest.vocab_size();
     // Hidden-state frames must fit MAX_FRAME_BYTES, so wide models send the prompt in chunks.
+    // Generation sends BF16 hidden states (see `request`); verification keeps F32.
+    let width = if verify { 4 } else { 2 };
     let chunk_tokens =
-        ((MAX_FRAME_BYTES - MAX_HEADER_BYTES - 4) / (4 * manifest.hidden_size())).clamp(1, 512);
+        ((MAX_FRAME_BYTES - MAX_HEADER_BYTES - 4) / (width * manifest.hidden_size())).clamp(1, 512);
     let prompt = tokenizer
         .encode(formatted, false)
         .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?

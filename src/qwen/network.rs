@@ -70,9 +70,16 @@ struct Resident {
     model: Engine,
     session: Option<Session>,
 }
+/// A detached result kept by the last stage until the client collects it.
+struct Delivered {
+    session: String,
+    position: usize,
+    bytes: Vec<u8>,
+}
 #[derive(Clone)]
 struct Worker {
     resident: Arc<Mutex<Resident>>,
+    results: Arc<tokio::sync::watch::Sender<Option<Arc<Delivered>>>>,
     info: Info,
     manifest: Manifest,
     token: String,
@@ -154,6 +161,7 @@ pub async fn serve(
             model,
             session: None,
         })),
+        results: Arc::new(tokio::sync::watch::channel(None).0),
         info: Info {
             model_id: manifest.model_id.clone(),
             model_hash: hash,
@@ -175,6 +183,7 @@ pub async fn serve(
     let app = Router::new()
         .route("/v1/qwen/info", get(info))
         .route("/v1/qwen/forward", post(forward))
+        .route("/v1/qwen/result", post(result))
         .route("/v1/qwen/reset", post(reset))
         .route("/v1/qwen/reserve", post(reserve))
         .layer(DefaultBodyLimit::max(MAX_FRAME_BYTES))
@@ -501,6 +510,9 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
     .await;
     let result: Result<Frame> = async {
         let frame = calculation??;
+        if frame.header.detached {
+            return detach(&state, frame);
+        }
         if let Some(next) = frame.header.route.first() {
             let response = state
                 .http
@@ -530,17 +542,94 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
     match result.and_then(|frame| frame.encode()) {
         Ok(bytes) => ([("content-type", "application/octet-stream")], bytes).into_response(),
         Err(err) => {
-            // A partial chain cannot safely retry a position: discard this local session.
-            if let Ok(mut resident) = state.resident.try_lock()
-                && resident
-                    .session
-                    .as_ref()
-                    .is_some_and(|s| s.id == session_id)
-            {
-                resident.model.clear();
-                resident.session = None;
-            }
+            discard(&state, &session_id);
             error(StatusCode::SERVICE_UNAVAILABLE, err)
         }
+    }
+}
+
+/// A partial chain cannot safely retry a position: discard this local session.
+fn discard(state: &Worker, session: &str) {
+    if let Ok(mut resident) = state.resident.try_lock()
+        && resident.session.as_ref().is_some_and(|s| s.id == session)
+    {
+        resident.model.clear();
+        resident.session = None;
+    }
+}
+
+/// Passes a detached frame to the next stage in the background, or keeps it at the last stage
+/// for the client, and returns this stage's acknowledgement.
+fn detach(state: &Worker, frame: Frame) -> Result<Frame> {
+    let bytes = frame.encode()?;
+    let mut ack = Frame {
+        header: frame.header.clone(),
+        values: vec![],
+    };
+    ack.header.kind = Kind::Accepted;
+    ack.header.tokens.clear();
+    ack.header.route.clear();
+    let sent = frame.header;
+    match sent.route.first() {
+        Some(next) => {
+            let (state, next) = (state.clone(), next.address);
+            tokio::spawn(async move {
+                let passed: Result<()> = async {
+                    let response = state
+                        .http
+                        .post(url(next, "/v1/qwen/forward"))
+                        .bearer_auth(&state.token)
+                        .header("content-type", "application/octet-stream")
+                        .body(bytes)
+                        .send()
+                        .await?;
+                    let reply = super::wire::response(response).await?;
+                    ensure!(reply.accepts(&sent), "invalid downstream acknowledgement");
+                    Ok(())
+                }
+                .await;
+                if let Err(error) = passed {
+                    tracing::warn!(%error, session = %sent.session, "passing a detached frame on failed");
+                    discard(&state, &sent.session);
+                }
+            });
+        }
+        None => {
+            state.results.send_replace(Some(Arc::new(Delivered {
+                session: sent.session,
+                position: sent.position,
+                bytes,
+            })));
+        }
+    }
+    Ok(ack)
+}
+
+#[derive(Deserialize)]
+struct Collect {
+    session: String,
+    position: usize,
+}
+/// Holds the request open until the last stage has the result for this session and position.
+async fn result(State(state): State<Worker>, Json(request): Json<Collect>) -> Response {
+    let mut results = state.results.subscribe();
+    let wanted = |d: &Option<Arc<Delivered>>| {
+        d.as_ref()
+            .is_some_and(|d| d.session == request.session && d.position == request.position)
+    };
+    let collected = tokio::time::timeout(super::RESULT_WAIT, async {
+        results
+            .wait_for(wanted)
+            .await
+            .ok()
+            .and_then(|d| d.as_ref().map(|d| d.bytes.clone()))
+    })
+    .await;
+    match collected {
+        Ok(Some(bytes)) => ([("content-type", "application/octet-stream")], bytes).into_response(),
+        _ => error(
+            StatusCode::GATEWAY_TIMEOUT,
+            "no result from the last stage; a stage or hop on the route failed",
+        ),
     }
 }

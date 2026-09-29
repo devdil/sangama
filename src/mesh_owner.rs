@@ -164,6 +164,14 @@ impl Owners {
                     release: false,
                 }))
             }
+            "/v1/qwen/result" => {
+                let r: SessionRequest =
+                    serde_json::from_slice(body).map_err(|_| "invalid session request")?;
+                match self.sessions.claims.get(&r.session) {
+                    Some(c) if c.owner == peer => Ok(None),
+                    _ => Err("only the session's client may collect its result"),
+                }
+            }
             "/v1/node/reserve" | "/v1/node/load" | "/v1/node/release" => {
                 if role != "client" {
                     return Err("only clients place shards");
@@ -274,6 +282,8 @@ mod tests {
             header: Header {
                 protocol: 1,
                 sample: true,
+                detached: false,
+                bf16: false,
                 model_hash: "h".into(),
                 session: session.into(),
                 position: 0,
@@ -329,6 +339,15 @@ mod tests {
                 .is_err()
         );
         ok(&mut o, head, "worker", "/v1/qwen/forward", &frame(s), t);
+        // Only the session's client collects a detached result.
+        let collect = serde_json::to_vec(&serde_json::json!({"session":s,"position":0})).unwrap();
+        assert!(
+            o.admit(client, "client", "/v1/qwen/result", &collect, t)
+                .is_ok()
+        );
+        for (peer, role) in [(other, "client"), (head, "worker")] {
+            assert!(o.admit(peer, role, "/v1/qwen/result", &collect, t).is_err());
+        }
         // Another client, or a worker in the route, cannot reset or re-reserve it.
         assert!(
             o.admit(other, "client", "/v1/qwen/reset", &session(s, None), t)
