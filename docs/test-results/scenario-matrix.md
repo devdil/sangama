@@ -102,3 +102,11 @@ Recorded per run, not pass/fail: model load time, time to first token, decode to
 | F1 | Candle CUDA vs llama.cpp CUDA, F32, same box | E2 | Recorded: 55 vs 103 tok/s ([run](gpu-matrix-2026-09-29.md)) |
 | F2 | llama.cpp CUDA F32 vs Q4_K_M | E2 | Recorded: 103 vs 220 tok/s ([run](gpu-matrix-2026-09-29.md)) |
 | F3 | Local route vs cross-geography route (C1) | E1 + E2 | Recorded: 55–106 vs 1–3 tok/s ([run](gpu-matrix-2026-09-29.md)) |
+
+## G. Simulated device fleets
+
+| ID | Scenario | Env | Check | Status |
+|---|---|---|---|---|
+| G1 | Four home devices (desktop, MacBook, old laptop, phone), relay only, sleep/wake churn, 180 s | E1 Docker | Exact tokens; client re-routes around sleeping devices | Pass: 16/18 exact, 2 expected failures ([run](device-simulation-2026-09-29.md)) |
+| G2 | 3 copies per shard, longer churn | E1 Docker | Planning never finds no route | Planned |
+| G3 | Profiles calibrated against real laptops on home networks | Real devices | Simulated speeds within 20% of real | Planned |
