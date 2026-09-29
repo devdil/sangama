@@ -11,6 +11,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
 WORKDIR /app
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/network-auth ./crates/network-auth
+COPY crates/llama-stage ./crates/llama-stage
 COPY src ./src
 COPY ui ./ui
 ENV CARGO_BUILD_JOBS=4 CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}

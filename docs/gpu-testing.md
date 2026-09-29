@@ -64,6 +64,8 @@ Workers only accept loopback connections, so all services share the host network
 - **macOS VMs** get Metal through paravirtualized graphics [26], but the guest GPU reports an older feature set without bf16 or simdgroup matrices, which slows ML kernels [27]. The macOS licence allows two extra macOS instances per Mac [28].
 - **Unified memory cannot be partitioned.** Apple has no equivalent of MIG. Metal limits each process to `recommendedMaxWorkingSetSize`, about 74% of RAM on a 24 GB M5 Pro (measured). `sudo sysctl iogpu.wired_limit_mb=<MB>` raises the system limit until reboot; `0` restores the default [29].
 
+For AMD, Intel and Qualcomm GPUs, build the [llama.cpp engine](llamacpp.md) with Vulkan or ROCm.
+
 To test several Metal workers on one Mac, run native worker processes on different loopback ports (see [secure peer test](secure-peer-test.md)). They share the GPU, each within its own budget. One route may mix CPU, Metal and CUDA workers.
 
 ## Sources

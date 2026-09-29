@@ -24,3 +24,10 @@
 !crates/network-auth/Cargo.toml
 !crates/network-auth/src/
 !crates/network-auth/src/**
+!crates/llama-stage/
+!crates/llama-stage/Cargo.toml
+!crates/llama-stage/build.rs
+!crates/llama-stage/src/
+!crates/llama-stage/src/**
+!crates/llama-stage/patches/
+!crates/llama-stage/patches/**

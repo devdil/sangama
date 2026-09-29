@@ -1,3 +1,4 @@
+pub mod engine;
 pub mod model;
 pub mod network;
 pub mod runner;
@@ -20,7 +21,8 @@ pub const WEIGHTS_SHA256: &str = "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49
 pub const LAYERS: usize = 24;
 pub const CONTEXT_LIMIT: usize = 4096;
 /// Execution backends a worker may use. Workers in one route may use different backends.
-pub const DEVICES: [&str; 3] = ["cpu", "metal", "cuda"];
+/// Vulkan and ROCm are available only with the llama.cpp engine.
+pub const DEVICES: [&str; 5] = ["cpu", "metal", "cuda", "vulkan", "rocm"];
 /// Largest completion one request may ask for; prompt plus output must still fit CONTEXT_LIMIT.
 pub const OUTPUT_LIMIT: usize = 512;
 
@@ -106,6 +108,48 @@ pub fn load_manifest(dir: &Path) -> Result<(Manifest, String)> {
     Ok((manifest, format!("{:x}", Sha256::digest(&bytes))))
 }
 
+/// A GGUF conversion of the pinned checkpoint, approved for the llama.cpp engine.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GgufSpec {
+    pub file: String,
+    pub sha256: String,
+    pub precision: String,
+    pub file_bytes: u64,
+}
+
+/// `gguf.json` beside the manifest, written by scripts/prepare-gguf.py. It names the manifest
+/// hash it was made from, so a GGUF can only serve the model its route expects.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GgufIndex {
+    pub model_hash: String,
+    pub files: Vec<GgufSpec>,
+}
+
+/// Finds `name` in the model directory's GGUF approvals and verifies its hash.
+pub fn approved_gguf(dir: &Path, name: &str, model_hash: &str) -> Result<GgufSpec> {
+    ensure!(
+        Path::new(name).components().count() == 1 && name.ends_with(".gguf"),
+        "GGUF must be a .gguf file name inside the model directory"
+    );
+    let index: GgufIndex = serde_json::from_slice(
+        &std::fs::read(dir.join("gguf.json"))
+            .context("run python3 scripts/prepare-gguf.py first")?,
+    )?;
+    ensure!(
+        index.model_hash == model_hash,
+        "gguf.json was made from a different manifest"
+    );
+    let spec = index
+        .files
+        .into_iter()
+        .find(|f| f.file == name)
+        .ok_or_else(|| anyhow::anyhow!("{name} is not listed in gguf.json"))?;
+    check_hash(&dir.join(&spec.file), &spec.sha256)?;
+    Ok(spec)
+}
+
 pub fn config(dir: &Path) -> Result<model::Config> {
     let mut value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.join("config.json"))?)?;
@@ -150,6 +194,7 @@ pub fn device(name: &str) -> Result<Device> {
                 anyhow::bail!("rebuild with --features cuda to use an NVIDIA GPU")
             }
         }
+        "vulkan" | "rocm" => anyhow::bail!("{name} is available only with --engine llamacpp"),
         _ => anyhow::bail!("device must be cpu, metal or cuda"),
     }
 }
@@ -165,4 +210,50 @@ pub fn weights(path: &Path, device: &Device) -> Result<VarBuilder<'static>> {
 
 pub fn default_dir() -> PathBuf {
     PathBuf::from(".models/qwen2.5-0.5b-instruct")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture() -> (PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("sangama-gguf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("model.gguf"), b"weights").unwrap();
+        let hash = sha256(&dir.join("model.gguf")).unwrap();
+        (dir, hash)
+    }
+
+    fn write_index(dir: &Path, model_hash: &str, sha: &str) {
+        let index = GgufIndex {
+            model_hash: model_hash.into(),
+            files: vec![GgufSpec {
+                file: "model.gguf".into(),
+                sha256: sha.into(),
+                precision: "f32".into(),
+                file_bytes: 7,
+            }],
+        };
+        std::fs::write(dir.join("gguf.json"), serde_json::to_vec(&index).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn approves_only_listed_gguf_for_this_manifest() {
+        let (dir, sha) = fixture();
+        write_index(&dir, "manifest", &sha);
+        assert_eq!(
+            approved_gguf(&dir, "model.gguf", "manifest")
+                .unwrap()
+                .precision,
+            "f32"
+        );
+        let refused = |name: &str, hash: &str| approved_gguf(&dir, name, hash).is_err();
+        assert!(refused("other.gguf", "manifest"));
+        assert!(refused("../model.gguf", "manifest"));
+        assert!(refused("model.safetensors", "manifest"));
+        assert!(refused("model.gguf", "another-manifest"));
+        write_index(&dir, "manifest", &"0".repeat(64));
+        assert!(refused("model.gguf", "manifest"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "sangama-llama-stage"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "One llama.cpp layer-range stage: hidden states or tokens in, hidden states or logits out"
+publish = false
+links = "llama"
+
+[features]
+default = []
+metal = []
+cuda = []
+vulkan = []
+hip = []
+
+[build-dependencies]
+cc = "1"
+cmake = "0.1"

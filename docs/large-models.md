@@ -68,7 +68,7 @@ Published measurements for comparison:
 
 ## Work needed in Sangama
 
-1. **Quantized weights.** Load 3–4-bit weights (GGUF or MLX) instead of F32, and send BF16 activations between stages. This is the largest blocker.
+1. **Quantized weights.** Load 3–4-bit weights (GGUF or MLX) instead of F32, and send BF16 activations between stages. This is the largest blocker. The [llama.cpp spike](../spikes/llamacpp/README.md) ran Qwen2.5-0.5B as two layer-range stages, in F32 and Q4_K_M, bit-exact against the unsplit model and token-identical to Candle.
 2. **Model architectures.** Qwen3.5 needs MoE and Gated DeltaNet layers; Kimi needs MLA and native INT4. Support in candle 0.11 has not been checked yet.
 3. **Region-aware placement.** The allocator currently minimises client-to-peer probe latency. It should measure latency between peers and keep a route within one city or region.
 4. **Concurrent conversations per worker.** Workers currently serve one conversation at a time.

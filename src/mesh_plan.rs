@@ -121,6 +121,7 @@ mod tests {
             model_hash: "hash".into(),
             shard: spec,
             device: "cpu".into(),
+            engine: "candle".into(),
             precision: "f32".into(),
             pid: 1,
             busy: false,

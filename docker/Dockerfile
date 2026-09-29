@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 WORKDIR /app
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/network-auth ./crates/network-auth
+COPY crates/llama-stage ./crates/llama-stage
 COPY src ./src
 COPY ui ./ui
 ENV CARGO_BUILD_JOBS=2
