@@ -22,7 +22,7 @@ uuid = { version = "1", features = ["v4"] }
 candle = { package = "candle-core", version = "=0.11.0" }
 candle-nn = "=0.11.0"
 candle-transformers = "=0.11.0"
-tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
 sha2 = "0.10"
 subtle = "2.6"
 libc = "0.2"
