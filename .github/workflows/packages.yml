@@ -43,7 +43,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -84,7 +84,7 @@ jobs:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           path: dist
