@@ -1,0 +1,14 @@
+[
+ {"id": "C1", "name": "Mac Candle Metal (shard 0) -> US Candle CUDA (shard 1)", "expect": "f32",
+  "remote": {"shard": 1, "args": ["--device", "cuda"], "env": "CUDA_VISIBLE_DEVICES=1"},
+  "workers": [{"args": ["--device", "metal"]}, {"remote": true}]},
+ {"id": "C2", "name": "US Candle CUDA (shard 0) -> Mac Candle Metal (shard 1)", "expect": "f32",
+  "remote": {"shard": 0, "args": ["--device", "cuda"], "env": "CUDA_VISIBLE_DEVICES=0"},
+  "workers": [{"remote": true}, {"args": ["--device", "metal"]}]},
+ {"id": "C3", "name": "Mac llama.cpp Metal F32 (shard 0) -> US Candle CUDA (shard 1)", "expect": "f32",
+  "remote": {"shard": 1, "args": ["--device", "cuda"], "env": "CUDA_VISIBLE_DEVICES=1"},
+  "workers": [{"args": ["--device", "metal", "--engine", "llamacpp", "--gguf", "qwen2.5-0.5b-instruct-f32.gguf"]}, {"remote": true}]},
+ {"id": "C4", "name": "Mac llama.cpp Metal Q4_K_M (shard 0) -> US llama.cpp CUDA Q4_K_M (shard 1), same GGUF", "expect": "q4",
+  "remote": {"shard": 1, "args": ["--device", "cuda", "--engine", "llamacpp", "--gguf", "qwen2.5-0.5b-instruct-q4_k_m-mac.gguf"], "env": "CUDA_VISIBLE_DEVICES=1"},
+  "workers": [{"args": ["--device", "metal", "--engine", "llamacpp", "--gguf", "qwen2.5-0.5b-instruct-q4_k_m.gguf"]}, {"remote": true}]}
+]

@@ -39,6 +39,10 @@ pub struct Info {
     pub busy: bool,
     #[serde(default)]
     pub memory: Option<crate::resources::Memory>,
+    /// SHA-256 of the GGUF a llama.cpp worker loaded. Quantizing is not reproducible across
+    /// machines, so a route must not mix different GGUF files of the same precision.
+    #[serde(default)]
+    pub weights_sha256: Option<String>,
 }
 
 fn candle_engine() -> String {
@@ -90,7 +94,7 @@ pub async fn serve(
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("shard index not in manifest"))?
         .clone();
-    let (model, precision, memory) = match engine.name {
+    let (model, precision, weights_sha256, memory) = match engine.name {
         "candle" => {
             ensure!(engine.gguf.is_none(), "--gguf requires --engine llamacpp");
             // Create the device first: it reports a missing build feature clearly, and a CUDA
@@ -101,8 +105,24 @@ pub async fn serve(
             let file = dir.join(&spec.file);
             check_hash(&file, &spec.sha256)?;
             let cfg = config(dir)?;
-            let model = ShardedModel::new(&cfg, weights(&file, &device)?, spec.start, spec.end)?;
-            (Engine::Candle(Box::new(model)), "f32".to_string(), memory)
+            let model = weights(&file, &device)
+                .and_then(|vb| Ok(ShardedModel::new(&cfg, vb, spec.start, spec.end)?))
+                .map_err(|error| {
+                    if error.to_string().contains("UNSUPPORTED_PTX_VERSION") {
+                        error.context(
+                            "Sangama was built with a CUDA toolkit newer than this driver supports; \
+                             rebuild with a toolkit no newer than the CUDA version nvidia-smi reports",
+                        )
+                    } else {
+                        error
+                    }
+                })?;
+            (
+                Engine::Candle(Box::new(model)),
+                "f32".to_string(),
+                None,
+                memory,
+            )
         }
         "llamacpp" => open_llamacpp(dir, &spec, &hash, backend, engine.gguf)?,
         other => anyhow::bail!("unknown engine {other}"),
@@ -118,6 +138,7 @@ pub async fn serve(
             shard: spec,
             device: backend.into(),
             engine: engine.name.into(),
+            weights_sha256,
             precision,
             pid: std::process::id(),
             busy: false,
@@ -154,7 +175,7 @@ fn open_llamacpp(
     hash: &str,
     backend: &str,
     gguf: Option<&str>,
-) -> Result<(Engine, String, crate::resources::Memory)> {
+) -> Result<(Engine, String, Option<String>, crate::resources::Memory)> {
     use anyhow::Context;
     use sangama_llama_stage::{Options, Stage, gpu_memory};
     let gguf = super::approved_gguf(
@@ -209,7 +230,12 @@ fn open_llamacpp(
         stage.precision(),
         gguf.precision
     );
-    Ok((Engine::LlamaCpp(stage), gguf.precision, memory))
+    Ok((
+        Engine::LlamaCpp(stage),
+        gguf.precision,
+        Some(gguf.sha256),
+        memory,
+    ))
 }
 
 #[cfg(not(feature = "llamacpp"))]
@@ -219,7 +245,7 @@ fn open_llamacpp(
     _: &str,
     _: &str,
     _: Option<&str>,
-) -> Result<(Engine, String, crate::resources::Memory)> {
+) -> Result<(Engine, String, Option<String>, crate::resources::Memory)> {
     anyhow::bail!("rebuild with --features llamacpp (or llamacpp-metal, -cuda, -vulkan, -hip)")
 }
 

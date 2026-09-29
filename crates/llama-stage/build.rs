@@ -42,6 +42,8 @@ fn main() {
         .define("GGML_METAL_EMBED_LIBRARY", "ON")
         .define("GGML_BLAS", "OFF")
         .define("GGML_CUDA", on_off(feature("cuda")))
+        // Each worker uses one GPU, so multi-GPU all-reduce (and linking NCCL) is not needed.
+        .define("GGML_CUDA_NCCL", "OFF")
         .define("GGML_VULKAN", on_off(feature("vulkan")))
         .define("GGML_HIP", on_off(feature("hip")))
         .build();
