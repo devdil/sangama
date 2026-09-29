@@ -16,3 +16,5 @@ Standalone generation update: `standalone-generation-test.json` records real Qwe
 a metadata-only client, repeated-session cleanup, automatic workers without the original checkpoint,
 and matching token IDs against optional full-model verification. The new `tests/generation.rs`
 regression covers the metadata-only protocol path and stopping behavior without a model download.
+
+- [Qwen3.5-397B on 20 rented GPUs, relay only](qwen35-397b-relay-2026-09-29.md): 20 stages across California, every hop through one relay; per-machine metrics and per-run reports alongside.
