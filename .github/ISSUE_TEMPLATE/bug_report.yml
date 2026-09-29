@@ -1,0 +1,53 @@
+name: Bug report
+description: Something fails, crashes or behaves differently from the docs
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suspected security problem? Report it privately instead: https://github.com/devdil/sangama/security/advisories/new
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ./scripts/cargo build --release --locked
+        2. ./target/release/sangama generate --device cpu ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Qwen inference / generation
+        - Admitted mesh / relay / discovery
+        - Invitations / membership / portal
+        - Contribution credits
+        - OpenCode / chat API
+        - Installer / packaging
+        - Numerical fixture / demo
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: macOS 15 arm64, Metal, commit abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or report output
+      description: Remove tokens, keys and invitation codes before pasting.
+      render: shell
