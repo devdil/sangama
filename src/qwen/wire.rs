@@ -63,6 +63,20 @@ pub struct Header {
     pub tokens: Vec<u32>,
     pub route: Vec<Endpoint>,
     pub trace: Vec<Trace>,
+    /// The frame's input tokens, carried to the last stage so its MTP head sees every
+    /// position. Sent on every frame of a session that asks for drafts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<u32>,
+    /// How many tokens the last stage should draft after the one it samples (MTP).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub mtp_drafts: usize,
+    /// The last stage's drafts, to verify in the next step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafts: Vec<u32>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 pub struct Frame {
@@ -97,11 +111,14 @@ impl Frame {
                     .header
                     .tokens
                     .iter()
+                    .chain(&self.header.drafts)
                     .all(|&t| (t as usize) < vocab_size)
+                && self.header.drafts.len() <= self.header.mtp_drafts
         } else {
             self.header.kind == Kind::Logits
                 && self.values.len() == vocab_size
                 && self.header.tokens.is_empty()
+                && self.header.drafts.is_empty()
         }
     }
 
@@ -227,6 +244,9 @@ mod tests {
                 tokens: vec![],
                 route: vec![],
                 trace: vec![],
+                inputs: vec![],
+                mtp_drafts: 0,
+                drafts: vec![],
             },
             values: vec![0.0, -0.125, 1.25],
         }

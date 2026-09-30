@@ -70,6 +70,7 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
     let info = Info {
         busy: false,
         slots: 1,
+        mtp_sha256: None,
         memory: None,
         model_id: qwen::MODEL_ID.into(),
         model_hash: hash,

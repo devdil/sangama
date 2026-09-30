@@ -51,6 +51,9 @@ pub struct Info {
     /// machines, so a route must not mix different GGUF files of the same precision.
     #[serde(default)]
     pub weights_sha256: Option<String>,
+    /// SHA-256 of the MTP head a final stage drafts with, if it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtp_sha256: Option<String>,
 }
 
 /// Test-only: `SANGAMA_SIMULATE_MS_PER_LAYER_TOKEN` adds this many milliseconds per layer and
@@ -75,6 +78,25 @@ fn one_slot() -> usize {
 
 /// A session idle this long loses its slot.
 const SESSION_IDLE: Duration = Duration::from_secs(60);
+
+/// Most tokens a client may ask the final stage to draft per step.
+const MAX_DRAFTS: usize = 8;
+
+/// Drafts the MTP head is less sure of than this are not proposed; `SANGAMA_MTP_P_MIN`.
+fn mtp_p_min() -> f32 {
+    static VALUE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("SANGAMA_MTP_P_MIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|v: &f32| (0.0..1.0).contains(v))
+            .unwrap_or(0.0)
+    })
+}
+
+fn argmax(values: &[f32]) -> usize {
+    (1..values.len()).fold(0, |best, i| if values[i] > values[best] { i } else { best })
+}
 
 struct Session {
     /// The engine sequence that holds this session's cache.
@@ -164,6 +186,15 @@ struct Worker {
     allow_next: Vec<SocketAddr>,
 }
 
+/// A loaded engine with its precision, the SHA-256 of its GGUF and MTP head, and its memory.
+type Opened = (
+    Engine,
+    String,
+    Option<String>,
+    Option<String>,
+    crate::resources::Memory,
+);
+
 /// Which engine a worker runs, and for llama.cpp the approved GGUF file in the model directory.
 pub struct EngineChoice<'a> {
     pub name: &'a str,
@@ -172,6 +203,8 @@ pub struct EngineChoice<'a> {
     pub memory_budget_mib: Option<u64>,
     /// Sessions served at once, each with its own cache. Only llama.cpp supports more than one.
     pub slots: usize,
+    /// MTP-only GGUF in the model directory; the final stage then drafts tokens (llama.cpp).
+    pub mtp_gguf: Option<&'a str>,
 }
 
 pub async fn serve(
@@ -194,12 +227,16 @@ pub async fn serve(
         .get(index)
         .ok_or_else(|| anyhow::anyhow!("shard index not in manifest"))?
         .clone();
-    let (model, precision, weights_sha256, memory) = match engine.name {
+    let (model, precision, weights_sha256, mtp_sha256, memory) = match engine.name {
         "candle" => {
             ensure!(engine.gguf.is_none(), "--gguf requires --engine llamacpp");
             ensure!(
                 engine.slots == 1,
                 "--slots above 1 requires --engine llamacpp"
+            );
+            ensure!(
+                engine.mtp_gguf.is_none(),
+                "--mtp-gguf requires --engine llamacpp"
             );
             ensure!(
                 manifest.sliced.is_none(),
@@ -233,6 +270,7 @@ pub async fn serve(
                 Engine::Candle(Box::new(model)),
                 "f32".to_string(),
                 None,
+                None,
                 memory,
             )
         }
@@ -256,6 +294,7 @@ pub async fn serve(
             device: backend.into(),
             engine: engine.name.into(),
             weights_sha256,
+            mtp_sha256,
             precision,
             pid: std::process::id(),
             busy: false,
@@ -301,7 +340,7 @@ fn open_llamacpp(
     hash: &str,
     backend: &str,
     engine: &EngineChoice<'_>,
-) -> Result<(Engine, String, Option<String>, crate::resources::Memory)> {
+) -> Result<Opened> {
     use anyhow::Context;
     let gguf = engine.gguf;
     use sangama_llama_stage::{Options, Stage, gpu_memory};
@@ -332,22 +371,44 @@ fn open_llamacpp(
     // Until each worker has its own slice of the GGUF, budget for the whole file.
     let layers = (spec.end - spec.start) as u64;
     let slots = engine.slots as u64;
+    let mtp = match engine.mtp_gguf {
+        Some(name) => {
+            ensure!(
+                Path::new(name).components().count() == 1 && name.ends_with(".gguf"),
+                "--mtp-gguf must be a .gguf file name inside the model directory"
+            );
+            ensure!(
+                spec.index + 1 == manifest.shards.len(),
+                "only the final stage drafts with an MTP head"
+            );
+            let path = dir.join(name);
+            let bytes = std::fs::metadata(&path)
+                .with_context(|| format!("MTP head {} not found", path.display()))?
+                .len();
+            Some((path, bytes))
+        }
+        None => None,
+    };
     let required = gguf.file_bytes
+        + mtp.as_ref().map_or(0, |(_, bytes)| *bytes)
         + slots * layers * 2 * CONTEXT_LIMIT as u64 * 2 * 64 * 4
         + 384 * 1024 * 1024;
     let memory = crate::resources::check_required(required, available, engine.memory_budget_mib)?;
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let stage = Stage::open(
-        &dir.join(&gguf.file),
-        spec.start,
-        spec.end,
-        &Options {
-            gpu,
-            context: CONTEXT_LIMIT,
-            slots: engine.slots,
-            threads,
-        },
-    )?;
+    let options = Options {
+        gpu,
+        context: CONTEXT_LIMIT,
+        slots: engine.slots,
+        threads,
+    };
+    let mut stage = Stage::open(&dir.join(&gguf.file), spec.start, spec.end, &options)?;
+    let mtp_sha256 = match &mtp {
+        Some((path, _)) => {
+            stage.attach_mtp(path, &options)?;
+            Some(super::sha256(path)?)
+        }
+        None => None,
+    };
     ensure!(
         stage.architecture() == manifest.architecture()
             && stage.layers() == manifest.layers()
@@ -365,6 +426,7 @@ fn open_llamacpp(
         Engine::LlamaCpp(stage),
         gguf.precision,
         Some(gguf.sha256),
+        mtp_sha256,
         memory,
     ))
 }
@@ -377,7 +439,7 @@ fn open_llamacpp(
     _: &str,
     _: &str,
     _: &EngineChoice<'_>,
-) -> Result<(Engine, String, Option<String>, crate::resources::Memory)> {
+) -> Result<Opened> {
     anyhow::bail!("rebuild with --features llamacpp (or llamacpp-metal, -cuda, -vulkan, -hip)")
 }
 
@@ -509,6 +571,20 @@ fn validate(frame: &Frame, state: &Worker) -> Result<()> {
         crate::security::next_hop(next.address, &state.allow_next)?;
     }
     ensure!(h.trace.len() == index, "incorrect trace length");
+    ensure!(
+        h.drafts.is_empty() && h.mtp_drafts <= MAX_DRAFTS,
+        "invalid draft request"
+    );
+    if !h.inputs.is_empty() {
+        ensure!(
+            h.inputs.len() == h.seq_len
+                && h.inputs
+                    .iter()
+                    .all(|t| (*t as usize) < state.manifest.vocab_size())
+                && (index > 0 || h.inputs == h.tokens),
+            "invalid input tokens"
+        );
+    }
     if index == 0 {
         ensure!(
             h.kind == Kind::Tokens && h.tokens.len() == h.seq_len && frame.values.is_empty(),
@@ -664,6 +740,33 @@ fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Fra
                 .forward(slot, &h.tokens, &frame.values, h.seq_len, h.position)?;
         (None, values)
     };
+    // The final stage's MTP head sees every kept position, then drafts after the token the
+    // model chose: the drafts it verified up to the first rejection, then its own token.
+    let drafts = if last && !h.inputs.is_empty() && resident.model.has_mtp() {
+        let (keep, next) = match &drafted {
+            Some(ids) => {
+                let accepted = h.inputs[1..]
+                    .iter()
+                    .zip(ids)
+                    .take_while(|(draft, model)| draft == model)
+                    .count();
+                (accepted + 1, ids[accepted])
+            }
+            None => (h.seq_len, argmax(&values) as u32),
+        };
+        let wanted = if h.sample { h.mtp_drafts } else { 0 };
+        let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
+        resident.model.mtp_step(
+            slot,
+            &h.inputs[..keep],
+            h.position,
+            next,
+            wanted.min(room),
+            mtp_p_min(),
+        )?
+    } else {
+        vec![]
+    };
     if let Some(ms) = simulated_ms_per_layer_token() {
         let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
         std::thread::sleep(Duration::from_secs_f64(
@@ -693,6 +796,10 @@ fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Fra
     } else {
         Kind::Hidden
     };
+    if header.route.is_empty() {
+        header.inputs.clear();
+        header.drafts = drafts;
+    }
     if let Some(ids) = drafted {
         header.tokens = ids;
         header.kind = Kind::Sampled;
@@ -701,13 +808,7 @@ fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Fra
             values.len() == worker.manifest.vocab_size() && values.iter().all(|v| v.is_finite()),
             "invalid final logits"
         );
-        let mut best = 0;
-        for i in 1..values.len() {
-            if values[i] > values[best] {
-                best = i;
-            }
-        }
-        header.tokens = vec![best as u32];
+        header.tokens = vec![argmax(&values) as u32];
         header.kind = Kind::Sampled;
         values.clear();
     }

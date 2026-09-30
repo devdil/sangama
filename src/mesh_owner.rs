@@ -293,6 +293,9 @@ mod tests {
                 tokens: vec![],
                 route: vec![],
                 trace: vec![],
+                inputs: vec![],
+                mtp_drafts: 0,
+                drafts: vec![],
             },
             values: vec![0.0],
         }

@@ -187,6 +187,9 @@ enum Command {
         /// Sessions this worker serves at once, each with its own cache (llamacpp only).
         #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=256))]
         slots: u16,
+        /// MTP-only GGUF in the model directory: the final stage drafts tokens with it (llamacpp).
+        #[arg(long)]
+        mtp_gguf: Option<String>,
         #[arg(long, default_value = "127.0.0.1:7901")]
         listen: SocketAddr,
         /// Explicit permitted downstream loopback/tunnel endpoints.
@@ -463,6 +466,7 @@ async fn main() -> Result<()> {
             gguf,
             memory_budget_mib,
             slots,
+            mtp_gguf,
             listen,
             allow_next,
         } => {
@@ -475,6 +479,7 @@ async fn main() -> Result<()> {
                     gguf: gguf.as_deref(),
                     memory_budget_mib,
                     slots: slots.into(),
+                    mtp_gguf: mtp_gguf.as_deref(),
                 },
                 listen,
                 token(cli.token)?,

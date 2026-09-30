@@ -220,6 +220,7 @@ mod tests {
                 pid: 1,
                 busy: false,
                 slots: 1,
+                mtp_sha256: None,
                 memory: None,
             },
             &Keypair::generate_ed25519(),

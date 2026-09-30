@@ -390,6 +390,7 @@ async fn reset(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn request(
     model_hash: &str,
     session: &str,
@@ -398,6 +399,7 @@ fn request(
     position: usize,
     sample: bool,
     speculative: bool,
+    mtp_drafts: usize,
 ) -> Frame {
     Frame {
         header: Header {
@@ -415,6 +417,14 @@ fn request(
             tokens: tokens.to_vec(),
             route: route.to_vec(),
             trace: vec![],
+            // The last stage's MTP head must see every position, so every frame carries them.
+            inputs: if mtp_drafts > 0 {
+                tokens.to_vec()
+            } else {
+                vec![]
+            },
+            mtp_drafts,
+            drafts: vec![],
         },
         values: vec![],
     }
@@ -428,6 +438,16 @@ fn speculation() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .filter(|v| *v <= 16)
+        .unwrap_or(0)
+}
+
+/// Tokens the last stage drafts per step with the model's MTP head; `SANGAMA_MTP` sets it,
+/// 0 (the default) disables. Takes precedence over prompt-lookup drafts.
+fn mtp_drafts() -> usize {
+    std::env::var("SANGAMA_MTP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|v| *v <= 8)
         .unwrap_or(0)
 }
 
@@ -708,7 +728,7 @@ async fn execute_chat(
             let _ = step(
                 &http,
                 &options.token,
-                &request(&model_hash, &session, &route, &prompt, 0, false, false),
+                &request(&model_hash, &session, &route, &prompt, 0, false, false, 0),
                 vocab_size,
                 true,
             )
@@ -727,9 +747,19 @@ async fn execute_chat(
         let (mut drafted, mut kept, mut steps) = (0usize, 0usize, 0usize);
         let limit = local.as_ref().map_or(options.max_tokens, |b| b.ids.len());
         let speculate = if verify { 0 } else { speculation() };
+        let mtp = if verify { 0 } else { mtp_drafts() };
+        // Drafts the last stage proposed with the result of the previous step.
+        let mut proposed: Vec<u32> = Vec::new();
         'generate: while ids.len() < limit {
             // After the prompt, each step sends the last token plus any drafts to verify.
             let drafts = match ids.last() {
+                Some(_) if mtp > 0 => {
+                    let room = (limit - ids.len() - 1).min(CONTEXT_LIMIT - position - 1);
+                    std::mem::take(&mut proposed)
+                        .into_iter()
+                        .take(room)
+                        .collect()
+                }
                 Some(_) if speculate > 0 => {
                     let room = (limit - ids.len() - 1).min(CONTEXT_LIMIT - position - 1);
                     let seen: Vec<u32> = prompt.iter().chain(&ids).copied().collect();
@@ -765,6 +795,7 @@ async fn execute_chat(
                     position,
                     !verify,
                     !drafts.is_empty(),
+                    mtp,
                 );
                 let response =
                     step(&http, &options.token, &frame, vocab_size, n + 1 == chunks).await?;
@@ -777,6 +808,7 @@ async fn execute_chat(
                 position += chunk.len();
             }
             let result = last.context("empty context")?;
+            proposed = result.header.drafts.clone();
             // Keep the drafts up to the first one the model disagrees with, then its own token.
             let produced = if !drafts.is_empty() {
                 let greedy = &result.header.tokens;

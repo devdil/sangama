@@ -78,6 +78,36 @@ impl Engine {
         }
     }
 
+    /// Whether this engine can draft tokens with the model's MTP head.
+    pub fn has_mtp(&self) -> bool {
+        match self {
+            Engine::Candle(_) => false,
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => stage.has_mtp(),
+        }
+    }
+
+    /// Final stage with an MTP head, right after computing a batch from `position`: feed it
+    /// the kept inputs and draft up to `n_draft` tokens after `next`.
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn mtp_step(
+        &mut self,
+        slot: usize,
+        inputs: &[u32],
+        position: usize,
+        next: u32,
+        n_draft: usize,
+        p_min: f32,
+    ) -> Result<Vec<u32>> {
+        match self {
+            Engine::Candle(_) => anyhow::bail!("MTP drafting needs the llama.cpp engine"),
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => {
+                Ok(stage.mtp_step(slot, inputs, position, next, n_draft, p_min)?)
+            }
+        }
+    }
+
     #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
     pub fn clear(&mut self, slot: usize) {
         match self {
