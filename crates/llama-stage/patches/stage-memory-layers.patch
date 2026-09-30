@@ -1,0 +1,18 @@
+--- a/src/llama-model.cpp	2026-09-30 09:05:58
++++ b/src/llama-model.cpp	2026-09-30 09:05:58
+@@ -2452,11 +2452,13 @@
+                             return hparams.is_recr(il) && hparams.n_ff(il) == 0;
+                         };
+                     } else if (arch == LLM_ARCH_QWEN3NEXT || arch == LLM_ARCH_QWEN35 || arch == LLM_ARCH_QWEN35MOE || arch == LLM_ARCH_MINIMAX_01) {
++                        // A layer-split stage keeps cache only for the layers it runs, so each
++                        // sequence costs a few layers' state rather than the whole model's.
+                         filter_attn = [&](uint32_t il) {
+-                            return il < hparams.n_layer() && !hparams.is_recr(il);
++                            return il < hparams.n_layer() && il >= cparams.il_beg && il < cparams.il_end && !hparams.is_recr(il);
+                         };
+                         filter_recr = [&](uint32_t il) {
+-                            return il < hparams.n_layer() && hparams.is_recr(il);
++                            return il < hparams.n_layer() && il >= cparams.il_beg && il < cparams.il_end && hparams.is_recr(il);
+                         };
+                     }
+ 
