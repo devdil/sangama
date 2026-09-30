@@ -1,0 +1,1 @@
+{"prefix": "r11m4", "concurrency": 4, "ok": 4, "failed": 0, "wall_s": 4.5, "tokens": 512, "aggregate_tps": 113.24, "steady_tps": 155.7, "stream_tps_p50": 36.95, "stream_tps_p5": 35.37, "ttft_s_p50": 0.14, "ttft_s_p95": 0.16, "identical_to_solo": "2/4", "mtp": 4, "tokens_per_pass": 3.28, "drafts_accepted": "356/594"}

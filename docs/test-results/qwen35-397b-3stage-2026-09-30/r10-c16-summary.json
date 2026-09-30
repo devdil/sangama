@@ -1,0 +1,1 @@
+{"prefix": "r10", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 19.1, "tokens": 2048, "aggregate_tps": 107.16, "steady_tps": 118.8, "stream_tps_p50": 7.42, "stream_tps_p5": 7.23, "ttft_s_p50": 0.15, "ttft_s_p95": 0.2, "identical_to_solo": "16/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

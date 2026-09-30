@@ -19,6 +19,20 @@ Two further limits:
 | Snapshot before each drafted pass | ~730 ms per pass, about 36 ms per stage | With 2 drafts and 41 of 42 accepted, a pass took 1,528 ms against 800 ms plain, although model compute was 43 ms. |
 | Throughput ceiling | ~90 passes per second in total | CPUs 10–20 % busy and GPUs under 7 % at the ceiling. 51 sessions gave 91 passes/s; 64 gave 56. |
 
+## Status after round 10
+
+Round 10 tested these streams on three 96 GB cards in one datacenter. Results are in [the round 10 report](../test-results/qwen35-397b-3stage-2026-09-30.md).
+
+| Stream | Status |
+|---|---|
+| A. Cheap rollback | Done and measured: 0.2–0.4 ms per pass inside workers, rollback included. |
+| B. Direct connections | Works after a fix (nodes dial advertised public addresses). Gain across distance not yet measured. |
+| C. Placement | Tool built and unit-tested (`scripts/route-order.py`). Not yet used on a fleet with distance. |
+| D. Throughput ceiling | Instrumentation done and circuit cap lifted. It located a different ceiling on the close fleet: the last stage's GPU, one frame at a time. The twenty-stage ceiling is still open. |
+| E. Per-hop overhead | Cheap clean-up only. Measured 1.3 ms per hop on the close fleet. |
+| F. Fewer, larger stages | Done by layout: 3 stages ran one request at 48 tok/s, 107 with drafts. |
+| G. Batching | Not built. Now the measured limit on a close fleet, starting with the last stage. |
+
 ## Work streams
 
 Each stream has one owner-sized goal, a way to measure it, and no dependency on the others unless stated.

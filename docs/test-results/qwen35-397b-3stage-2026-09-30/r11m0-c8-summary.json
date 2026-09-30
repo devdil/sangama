@@ -1,0 +1,1 @@
+{"prefix": "r11m0", "concurrency": 8, "ok": 8, "failed": 0, "wall_s": 10.2, "tokens": 1024, "aggregate_tps": 100.2, "steady_tps": 114.3, "stream_tps_p50": 14.2, "stream_tps_p5": 13.9, "ttft_s_p50": 0.13, "ttft_s_p95": 0.17, "identical_to_solo": "8/8", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}
