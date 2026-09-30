@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-397B: several requests per step - Sangama</title>
+<meta name="description" content="Letting each GPU work on several waiting requests in one step raised total throughput on three 96 GB stages from 119 to 403 tokens per second.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>Qwen3.5-397B: several requests per step</h1>
+<p><i>30 September 2026, round 11</i></p>
+
+<p>The <a href="/results/qwen35-397b-three-stages.html">three-stage test</a> found that total throughput stopped at about 120 tokens per second because the last GPU handled one frame at a time. This test builds the fix and measures it, one change at a time, on the same kind of fleet: three 96 GB GPUs and a relay in one datacenter.</p>
+
+<p><b>Result:</b> with each machine working on several waiting requests in one step, 48 requests together ran at <b>403 tokens per second</b> in total, up from 119. With 64 requests the total was 449. One request alone is unchanged at 48 to 50.</p>
+
+<hr>
+
+<h2>One change at a time</h2>
+
+<div class="wide">
+<table>
+<tr><th>Change</th><th>16 requests</th><th>48 requests</th></tr>
+<tr><td>Start: one frame per step</td><td>119</td><td>119</td></tr>
+<tr><td>Waiting requests share a step</td><td>174</td><td>184</td></tr>
+<tr><td>Requests grouped in the order the runtime can merge</td><td>184</td><td>210</td></tr>
+<tr><td>Smaller groups, so all three machines work at once</td><td>195</td><td>222</td></tr>
+<tr><td>One shared attention buffer, so any requests can merge</td><td>263</td><td><b>403</b></td></tr>
+</table>
+</div>
+
+<p class="small">Total tokens per second: the sum of each request's decode speed, plain decoding, 128 tokens per request. Over whole runs, prompts and start-up included, 48 requests gave 300 tokens per second and 64 gave 339.</p>
+
+<ul>
+<li><b>Sharing a step.</b> Frames that arrive while a GPU is busy now run together. The first attempt failed when 31 prompts arrived at once, 866 positions against a limit of 512; groups are now split to fit.</li>
+<li><b>Order matters.</b> With a separate attention buffer per request, the model runtime merges requests into one step only when their slot numbers are consecutive. Sorting by slot, and then one shared buffer, removed that limit. A group of 16 then costs about 20 ms per machine.</li>
+<li><b>Smaller groups.</b> One group of everything waiting makes all requests move through the machines as a single wave, so one machine works while the others idle. Smaller groups run back to back keep all three busy.</li>
+</ul>
+
+<h2>Is the output still right?</h2>
+
+<ul>
+<li><b>No request contained another request's text</b>, in every run checked.</li>
+<li><b>About a third matched their solo output exactly.</b> The rest differ at close word choices, for example "<b>Pipeline parallelism</b>" in bold against the same words without bold as the first token. Working on several requests together changes the arithmetic slightly, as working on several positions does.</li>
+</ul>
+
+<h2>What did not work</h2>
+
+<ul>
+<li><b>A confidence cutoff for guesses gave nothing.</b> We tried stopping the model's draft layer when it was unsure (cutoffs of 0.3, 0.5 and 0.75). The first version spent more time computing the confidence than it saved. With that fixed, a low cutoff trimmed almost nothing and a high one cut good guesses with bad ones.</li>
+<li><b>Guessing combined with shared steps was wrong.</b> With guesses, shared steps and the shared buffer all on, 13 of 32 requests picked up text from another request's prompt. We discarded those numbers. The cause and the re-test are in the <a href="/results/qwen35-397b-drafts-under-load.html">next result</a>.</li>
+</ul>
+
+<p>Full report and raw data: <a href="https://github.com/devdil/sangama/blob/main/docs/test-results/qwen35-397b-3stage-2026-09-30.md">docs/test-results</a>, round 11.</p>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:hello@sangama.co">hello@sangama.co</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>

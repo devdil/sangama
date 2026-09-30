@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-397B: guesses under load - Sangama</title>
+<meta name="description" content="With the fix for mixed sessions, guessing ahead is correct under load but lowers total throughput: 174 tokens per second against 233 for 16 requests.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>Qwen3.5-397B: guesses under load</h1>
+<p><i>30 September 2026, round 12</i></p>
+
+<p>In the <a href="/results/qwen35-397b-batching.html">previous result</a>, combining guessed tokens with shared steps mixed text between requests. This test runs the fix on the full model and measures what guessing does once machines share steps.</p>
+
+<p><b>Result:</b> the fix holds, and no request contained another's text. But under load guessing now lowers the total: 16 requests together delivered <b>233 tokens per second</b> without guesses and 174 with four guesses per step.</p>
+
+<hr>
+
+<h2>Setup</h2>
+<table>
+<tr><th>Model</th><td>Qwen3.5-397B-A17B, 4-bit, 3 stages of 20 layers</td></tr>
+<tr><th>Machines</th><td>3 &times; RTX PRO 6000 Blackwell with 96 GB, and a relay, in one datacenter</td></tr>
+<tr><th>Settings</th><td>16 sessions per machine, shared steps, shared attention buffer, up to 4 positions undone without saving state</td></tr>
+<tr><th>Load</th><td>16 requests at once, 256 tokens each</td></tr>
+</table>
+
+<h2>Numbers</h2>
+
+<div class="wide">
+<table>
+<tr><th>Guesses per step</th><th>Total tokens per second, whole run</th><th>Tokens per trip</th><th>Guesses accepted</th><th>Same tokens as alone</th><th>Text from another request</th></tr>
+<tr><td>none</td><td><b>233</b></td><td>1.00</td><td>-</td><td>7 of 16</td><td>none</td></tr>
+<tr><td>2</td><td>201</td><td>2.54</td><td>2468 of 3149</td><td>3 of 16</td><td>none</td></tr>
+<tr><td>4</td><td>174</td><td>3.26</td><td>2839 of 4929</td><td>8 of 16</td><td>none</td></tr>
+</table>
+</div>
+
+<p>One request alone on the same build: 47 tokens per second without guesses and 100 with four.</p>
+
+<ul>
+<li><b>The fix holds.</b> No request contained another request's text and none ended early. Requests with guesses matched their solo output about as often as requests without.</li>
+<li><b>Under load, guessing costs speed.</b> Once machines share steps, the GPU is the limit, and every wrong guess spends it. Requests with guesses also share steps less well, and the draft layer still serves one request at a time: 72 ms of the last machine's step with four guesses, against 13 ms without.</li>
+<li><b>So guessing is for a lightly loaded route.</b> One request doubles its speed; sixteen together lose 14 to 25%.</li>
+</ul>
+
+<h2>What went wrong before</h2>
+
+<p>With one shared attention buffer, the model runtime merges requests whose slot numbers have gaps between them into one step. The states it keeps for undoing guesses come out wrong in such a step, and a request then continues from another request's context. Guesses alone, shared steps alone, and the shared buffer alone each worked; the three together did not. Requests with guesses now share a step only with neighbours in adjacent slots. We reproduced the fault and the fix on a small model before this run.</p>
+
+<h2>A note on our totals</h2>
+
+<p>Earlier pages report totals as the sum of each request's own speed. That overstates the total when requests finish at different times, which guessing causes: it read 379 for the four-guess row above, whose whole run delivered 174. For runs without guesses the two are closer: 273 against 233 here, and 403 against 300 in the previous result. This page counts tokens over the whole run.</p>
+
+<h2>Next</h2>
+<ul>
+<li><b>Let the draft layer serve several requests per step.</b></li>
+<li><b>Turn guessing off when a machine is busy.</b></li>
+<li><b>Repeat each measurement</b>; these are single runs.</li>
+</ul>
+
+<p>Full report and raw data: <a href="https://github.com/devdil/sangama/blob/main/docs/test-results/qwen35-397b-3stage-2026-09-30.md">docs/test-results</a>, round 12.</p>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:hello@sangama.co">hello@sangama.co</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>
