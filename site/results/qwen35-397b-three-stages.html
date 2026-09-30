@@ -30,7 +30,7 @@ th { background: #eee; }
 <p><b>Result:</b></p>
 <ul>
 <li><b>One request:</b> 48 to 50 tokens per second, and up to <b>107</b> when the model guesses ahead. The twenty-machine fleets ran one request at 1.25 to 5.5.</li>
-<li><b>Many requests:</b> about 120 tokens per second in total at first, and <b>403 to 449</b> after letting each machine work on several requests per step.</li>
+<li><b>Many requests:</b> about 120 tokens per second in total at first, and <b>300 to 340</b> over whole runs (403 to 449 once all requests are under way) after letting each machine work on several requests per step.</li>
 <li><b>First token:</b> 115 to 210 milliseconds.</li>
 </ul>
 
@@ -121,8 +121,27 @@ th { background: #eee; }
 
 <ul>
 <li><b>No request contained another request's text.</b> About a third matched their solo output exactly; the rest differ at close word choices, because working on several requests together changes the arithmetic slightly, as working on several positions does.</li>
-<li><b>Guessing combined with this was wrong, and we do not report it.</b> With guesses, shared steps and the shared buffer all on, some requests picked up text from another request's prompt. We traced it to how the runtime stores the states it steps back to, reproduced it on a small model, and fixed it there. The fix has not been run on this model yet.</li>
+<li><b>Guessing combined with this was wrong at first.</b> With guesses, shared steps and the shared buffer all on, some requests picked up text from another request's prompt. We traced it to how the runtime stores the states it steps back to, reproduced it on a small model and fixed it. We discarded those numbers.</li>
 <li><b>A confidence cutoff for guesses gave nothing.</b> The draft layer's confidence does not tell its good guesses from its bad ones well enough.</li>
+</ul>
+
+<h2>Update: guesses and shared steps, re-tested</h2>
+
+<p>We ran the fix on this model: 16 requests at once, 256 tokens each.</p>
+
+<div class="wide">
+<table>
+<tr><th>Guesses per step</th><th>Total tokens per second, whole run</th><th>Text from another request</th></tr>
+<tr><td>none</td><td><b>233</b></td><td>none</td></tr>
+<tr><td>2</td><td>201</td><td>none</td></tr>
+<tr><td>4</td><td>174</td><td>none</td></tr>
+</table>
+</div>
+
+<ul>
+<li><b>The fix holds.</b> No request contained another request's text or ended early.</li>
+<li><b>Under load, guessing now costs speed.</b> Once machines share steps, the GPU is the limit, and every wrong guess spends it. One request alone still doubles with guesses (47 to 100 tokens per second); sixteen together lose 14 to 25%. Guessing is for a lightly loaded route.</li>
+<li><b>A note on our totals.</b> The totals in the table above this section (403 and 449) add up each request's own speed. Over the whole run, start-up included, those runs delivered 300 and 339 tokens per second. When requests finish at different times, as they do with guesses, adding speeds overstates the total badly, so this table counts tokens over the whole run.</li>
 </ul>
 
 <h2>Direct connections</h2>
@@ -143,7 +162,7 @@ th { background: #eee; }
 
 <h2>Next</h2>
 <ul>
-<li><b>Guesses together with shared steps</b>, re-tested on this model with the fix.</li>
+<li><b>Guesses for several requests in one step</b>, and no guessing when a machine is busy.</li>
 <li><b>Stop guessing when the draft layer is unsure</b>, so prose does not pay for guesses that are usually wrong.</li>
 <li><b>A middle layout</b>, six to ten machines with 24 to 48 GB and real distance between them, to test direct connections and placement where they matter.</li>
 </ul>
