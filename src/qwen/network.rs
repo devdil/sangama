@@ -891,9 +891,17 @@ fn compute_batch(
     // A device call holds at most MAX_BATCH_POSITIONS positions, so frames go in groups.
     let mut groups: Vec<Vec<usize>> = vec![];
     let mut size = 0;
+    // Frames that carry drafts also stay in runs of adjacent slots. With one shared attention
+    // buffer the engine would merge any slots into a step, but its rollback states then come
+    // out wrong: drafted sessions in slots with gaps between them lost their own context.
+    let mut previous: Option<(usize, bool)> = None;
     for &k in &together {
-        let n = frames[ready[k].0].0.header.seq_len;
-        if groups.is_empty() || size + n > MAX_BATCH_POSITIONS {
+        let h = &frames[ready[k].0].0.header;
+        let (n, slot) = (h.seq_len, ready[k].1);
+        let gap = previous
+            .is_some_and(|(before, drafted)| (drafted || h.speculative) && slot != before + 1);
+        previous = Some((slot, h.speculative));
+        if groups.is_empty() || gap || size + n > MAX_BATCH_POSITIONS {
             groups.push(vec![]);
             size = 0;
         }
