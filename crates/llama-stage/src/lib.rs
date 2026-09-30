@@ -71,11 +71,26 @@ unsafe extern "C" {
         err: *mut c_char,
         err_len: usize,
     ) -> c_int;
+    fn sg_stage_decode_many(
+        stage: *mut RawStage,
+        n_items: c_int,
+        seqs: *const c_int,
+        ns: *const c_int,
+        poss: *const c_int,
+        tokens: *const i32,
+        hidden: *const f32,
+        out: *mut f32,
+        out_len: usize,
+        ids: *mut i32,
+        err: *mut c_char,
+        err_len: usize,
+    ) -> c_int;
     fn sg_stage_state_size(stage: *mut RawStage, seq: c_int) -> usize;
     fn sg_stage_state_save(stage: *mut RawStage, seq: c_int, buf: *mut u8, len: usize) -> usize;
     fn sg_stage_state_load(stage: *mut RawStage, seq: c_int, buf: *const u8, len: usize) -> usize;
     fn sg_stage_clear(stage: *mut RawStage, seq: c_int);
     fn sg_stage_context(stage: *mut RawStage) -> *mut RawContext;
+    fn sg_stage_output_all(stage: *mut RawStage, on: c_int);
     fn sg_mtp_open(
         target: *mut RawContext,
         path: *const c_char,
@@ -90,6 +105,7 @@ unsafe extern "C" {
         mtp: *mut RawMtp,
         target: *mut RawContext,
         seq: c_int,
+        row0: c_int,
         tokens: *const i32,
         keep: c_int,
         pos: c_int,
@@ -138,6 +154,14 @@ pub fn gpu_memory() -> Option<(u64, u64, String)> {
     // SAFETY: valid out-pointers and buffer length.
     let found = unsafe { sg_gpu_memory(&mut free, &mut total, name.as_mut_ptr(), name.len()) };
     (found != 0).then(|| (free as u64, total as u64, message(&name)))
+}
+
+/// What `forward_many` returns for all its items, in item order.
+pub enum Batched {
+    /// A non-final stage: every position's hidden state.
+    Hidden(Vec<f32>),
+    /// The final stage: the greedy token after every position.
+    Tokens(Vec<u32>),
 }
 
 pub struct Options {
@@ -360,6 +384,75 @@ impl Stage {
         Ok(out)
     }
 
+    /// Runs one frame for each of several slots in a single device call. Each item is
+    /// `(slot, seq_len, position)`; `tokens` (first stage) or `hidden` (later stages) hold the
+    /// items' inputs one after another. A non-final stage returns every position's hidden
+    /// state in that order; the final stage returns the greedy token after every position.
+    pub fn forward_many(
+        &mut self,
+        items: &[(usize, usize, usize)],
+        tokens: &[u32],
+        hidden: &[f32],
+    ) -> Result<Batched> {
+        let total: usize = items.iter().map(|i| i.1).sum();
+        if items.is_empty() || total == 0 {
+            return Err(Error("empty batch".into()));
+        }
+        let int = |v: usize| c_int::try_from(v).map_err(|_| Error("parameter too large".into()));
+        let tokens = self.input(tokens, hidden, total)?;
+        let (mut seqs, mut ns, mut poss) = (Vec::new(), Vec::new(), Vec::new());
+        for &(slot, n, position) in items {
+            seqs.push(self.seq(slot)?);
+            ns.push(int(n)?);
+            poss.push(int(position)?);
+        }
+        let last = self.is_last();
+        let mut out = vec![0f32; if last { 0 } else { total * self.embd }];
+        let mut ids = vec![0i32; if last { total } else { 0 }];
+        let mut err = [0 as c_char; 256];
+        // SAFETY: the arrays have one entry per item and the buffers match the sizes the shim checks.
+        let rc = unsafe {
+            sg_stage_decode_many(
+                self.raw,
+                int(items.len())?,
+                seqs.as_ptr(),
+                ns.as_ptr(),
+                poss.as_ptr(),
+                if self.is_first() {
+                    tokens.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
+                if self.is_first() {
+                    std::ptr::null()
+                } else {
+                    hidden.as_ptr()
+                },
+                if last {
+                    std::ptr::null_mut()
+                } else {
+                    out.as_mut_ptr()
+                },
+                out.len(),
+                if last {
+                    ids.as_mut_ptr()
+                } else {
+                    std::ptr::null_mut()
+                },
+                err.as_mut_ptr(),
+                err.len(),
+            )
+        };
+        if rc != 0 {
+            return Err(Error(message(&err)));
+        }
+        Ok(if last {
+            Batched::Tokens(ids.into_iter().map(|id| id as u32).collect())
+        } else {
+            Batched::Hidden(out)
+        })
+    }
+
     /// Final stage only: the greedy next token after each of the `seq_len` positions, so a
     /// client can check several drafted tokens in one pass.
     pub fn greedy(
@@ -471,6 +564,8 @@ impl Stage {
             return Err(Error(message(&err)));
         }
         self.mtp = mtp;
+        // SAFETY: raw is a live stage.
+        unsafe { sg_stage_output_all(self.raw, 1) };
         Ok(())
     }
 
@@ -478,12 +573,15 @@ impl Stage {
         !self.mtp.is_null()
     }
 
-    /// After a forward or greedy call on `slot` from `position`, whose first `inputs.len()`
-    /// input tokens were kept: feed them to the MTP head, then draft up to `n_draft` tokens
-    /// after `next`, keeping each only while the head gives it at least `p_min`.
+    /// After a forward, greedy or `forward_many` call in which `slot`'s frame began at batch
+    /// row `row` (0 unless batched) and `position`, and whose first `inputs.len()` input
+    /// tokens were kept: feed them to the MTP head, then draft up to `n_draft` tokens after
+    /// `next`, keeping each only while the head gives it at least `p_min`.
+    #[allow(clippy::too_many_arguments)]
     pub fn mtp_step(
         &mut self,
         slot: usize,
+        row: usize,
         inputs: &[u32],
         position: usize,
         next: u32,
@@ -508,6 +606,7 @@ impl Stage {
                 self.mtp,
                 sg_stage_context(self.raw),
                 seq,
+                int(row)?,
                 tokens.as_ptr(),
                 int(tokens.len())?,
                 int(position)?,

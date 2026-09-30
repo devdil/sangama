@@ -1,0 +1,14 @@
+--- a/src/llama-context.cpp	2026-09-30 14:39:34
++++ b/src/llama-context.cpp	2026-09-30 14:39:35
+@@ -1814,7 +1814,10 @@
+             n_ubatch_use = n_ubatch_tg;
+         }
+ 
+-        mctx = memory->init_batch(*balloc, n_ubatch_use, output_all);
++        // Whole-sequence splits are only needed when embeddings are pooled per sequence. A
++        // layer-split stage returns every token's hidden state unpooled, so sequences of
++        // different sessions can share a ubatch.
++        mctx = memory->init_batch(*balloc, n_ubatch_use, output_all && cparams.pooling_type != LLAMA_POOLING_TYPE_NONE);
+         if (!mctx) {
+             return -2;
+         }

@@ -286,7 +286,9 @@ fn mtp_drafts_keep_greedy_output() {
     let started = std::time::Instant::now();
     let mut next = argmax(&logits) as u32;
     let mut out = vec![next];
-    let mut drafts = stages[1].mtp_step(slot, &prompt, 0, next, 4, 0.0).unwrap();
+    let mut drafts = stages[1]
+        .mtp_step(slot, 0, &prompt, 0, next, 4, 0.0)
+        .unwrap();
     let mut position = prompt.len();
     let (mut drafted, mut accepted) = (0, 0);
     while out.len() < n {
@@ -319,7 +321,7 @@ fn mtp_drafts_keep_greedy_output() {
         out.push(next);
         let kept = &inputs[..a + 1];
         let new_drafts = stages[1]
-            .mtp_step(slot, kept, position, next, 4, 0.0)
+            .mtp_step(slot, 0, kept, position, next, 4, 0.0)
             .unwrap();
         if a < drafts.len() && rewind {
             // Rewind both stages to just after the kept inputs: no copy, no replay.
@@ -349,4 +351,81 @@ fn mtp_drafts_keep_greedy_output() {
         started.elapsed().as_secs_f64() * 1000.0
     );
     assert_eq!(out, reference);
+}
+
+/// Needs SANGAMA_TEST_MTP_TARGET (a Qwen3.5 GGUF). Several sessions decoded in one call per
+/// stage must give the tokens each gives alone.
+#[test]
+fn batched_sessions_match_solo_generation() {
+    use sangama_llama_stage::Batched;
+    let Some(target) = std::env::var_os("SANGAMA_TEST_MTP_TARGET").map(PathBuf::from) else {
+        return;
+    };
+    let layers = Stage::open(&target, 0, 1, &options()).unwrap().layers();
+    let half = layers / 2;
+    let mut stages = vec![
+        Stage::open(&target, 0, half, &options()).unwrap(),
+        Stage::open(&target, half, layers, &options()).unwrap(),
+    ];
+    let prompts: Vec<Vec<u32>> = vec![
+        (1000..1024).collect(),
+        (5000..5017).collect(),
+        (9000..9031).collect(),
+    ];
+    let n = 24;
+    // Alone: slot 0, one session at a time.
+    let started = std::time::Instant::now();
+    let mut solo = Vec::new();
+    for p in &prompts {
+        for stage in &mut stages {
+            stage.clear(0);
+        }
+        let (mut input, mut position, mut out) = (p.clone(), 0, Vec::new());
+        while out.len() < n {
+            let hidden = stages[0]
+                .forward(0, &input, &[], input.len(), position)
+                .unwrap();
+            let logits = stages[1]
+                .forward(0, &[], &hidden, input.len(), position)
+                .unwrap();
+            position += input.len();
+            let token = argmax(&logits) as u32;
+            out.push(token);
+            input = vec![token];
+        }
+        solo.push(out);
+    }
+    let solo_ms = started.elapsed().as_secs_f64() * 1000.0;
+    // Together: slots 1-3, every step one call per stage for all three.
+    let started = std::time::Instant::now();
+    let mut inputs = prompts.clone();
+    let mut positions = vec![0usize; prompts.len()];
+    let mut outs: Vec<Vec<u32>> = vec![Vec::new(); prompts.len()];
+    while outs[0].len() < n {
+        let items: Vec<(usize, usize, usize)> = inputs
+            .iter()
+            .enumerate()
+            .map(|(k, input)| (k + 1, input.len(), positions[k]))
+            .collect();
+        let tokens: Vec<u32> = inputs.iter().flatten().copied().collect();
+        let Batched::Hidden(hidden) = stages[0].forward_many(&items, &tokens, &[]).unwrap() else {
+            panic!("first stage returned tokens");
+        };
+        let Batched::Tokens(ids) = stages[1].forward_many(&items, &[], &hidden).unwrap() else {
+            panic!("final stage returned hidden states");
+        };
+        let mut row = 0;
+        for k in 0..prompts.len() {
+            row += inputs[k].len();
+            let token = ids[row - 1];
+            positions[k] += inputs[k].len();
+            outs[k].push(token);
+            inputs[k] = vec![token];
+        }
+    }
+    eprintln!(
+        "three sessions: alone {solo_ms:.0} ms, batched {:.0} ms",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    assert_eq!(outs, solo);
 }

@@ -7,6 +7,12 @@ use anyhow::Result;
 /// on any backend llama.cpp was built with (`--features llamacpp-*`).
 pub const ENGINES: [&str; 2] = ["candle", "llamacpp"];
 
+/// What `Engine::forward_many` returns for all its items, in item order.
+pub enum Many {
+    Hidden(Vec<f32>),
+    Tokens(Vec<u32>),
+}
+
 pub enum Engine {
     Candle(Box<ShardedModel>),
     #[cfg(feature = "llamacpp")]
@@ -97,6 +103,35 @@ impl Engine {
         }
     }
 
+    /// Whether `forward_many` can run frames of several slots in one device call.
+    pub fn batches(&self) -> bool {
+        match self {
+            Engine::Candle(_) => false,
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(_) => true,
+        }
+    }
+
+    /// One frame for each of several slots, `(slot, seq_len, position)`, in one device call.
+    /// A non-final stage returns every position's hidden state in item order; the final
+    /// stage returns the greedy token after every position.
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn forward_many(
+        &mut self,
+        items: &[(usize, usize, usize)],
+        tokens: &[u32],
+        values: &[f32],
+    ) -> Result<Many> {
+        match self {
+            Engine::Candle(_) => anyhow::bail!("the candle engine runs one session at a time"),
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => Ok(match stage.forward_many(items, tokens, values)? {
+                sangama_llama_stage::Batched::Hidden(values) => Many::Hidden(values),
+                sangama_llama_stage::Batched::Tokens(ids) => Many::Tokens(ids),
+            }),
+        }
+    }
+
     /// Whether this engine can draft tokens with the model's MTP head.
     pub fn has_mtp(&self) -> bool {
         match self {
@@ -109,9 +144,11 @@ impl Engine {
     /// Final stage with an MTP head, right after computing a batch from `position`: feed it
     /// the kept inputs and draft up to `n_draft` tokens after `next`.
     #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    #[allow(clippy::too_many_arguments)]
     pub fn mtp_step(
         &mut self,
         slot: usize,
+        row: usize,
         inputs: &[u32],
         position: usize,
         next: u32,
@@ -122,7 +159,7 @@ impl Engine {
             Engine::Candle(_) => anyhow::bail!("MTP drafting needs the llama.cpp engine"),
             #[cfg(feature = "llamacpp")]
             Engine::LlamaCpp(stage) => {
-                Ok(stage.mtp_step(slot, inputs, position, next, n_draft, p_min)?)
+                Ok(stage.mtp_step(slot, row, inputs, position, next, n_draft, p_min)?)
             }
         }
     }

@@ -66,7 +66,9 @@ sg_mtp * sg_mtp_open(llama_context * target, const char * path, int n_gpu_layers
         return nullptr;
     }
     llama_set_embeddings_nextn(ctx, true, /*masked*/ true);
-    llama_set_embeddings_nextn(target, true, /*masked*/ false);
+    // Rows are then indexed by batch position, whatever order the device ran them in. The
+    // stage must mark every position as an output (sg_stage_output_all).
+    llama_set_embeddings_nextn(target, true, /*masked*/ true);
 
     sg_mtp * m = new sg_mtp();
     m->model   = model;
@@ -88,13 +90,14 @@ static void set_row(llama_batch & batch, int i, llama_token token, llama_pos pos
     memcpy(batch.embd + (size_t) i * n_embd, h, (size_t) n_embd * sizeof(float));
 }
 
-// After the target decoded a batch for `seq` starting at `pos`, whose first `keep` inputs were
-// `tokens` (the rest were rejected drafts): feed those positions to the MTP head, then draft
+// After the target decoded a batch in which `seq`'s frame began at batch row `row0` and position
+// `pos`, and whose first `keep` inputs were `tokens` (the rest were rejected drafts): feed those
+// positions to the MTP head, then draft
 // up to n_draft tokens after `next`, the token the target chose after them. A draft is kept
 // only while the head's probability for it is at least p_min. Returns the number of drafts.
-int sg_mtp_step(sg_mtp * m, llama_context * target, int seq, const int32_t * tokens, int keep, int pos,
-                int32_t next, int n_draft, float p_min, int32_t * drafts, char * err, size_t err_len) {
-    if (seq < 0 || seq >= m->n_seq || keep < 1 || keep > 512 || n_draft < 0) {
+int sg_mtp_step(sg_mtp * m, llama_context * target, int seq, int row0, const int32_t * tokens, int keep,
+                int pos, int32_t next, int n_draft, float p_min, int32_t * drafts, char * err, size_t err_len) {
+    if (seq < 0 || seq >= m->n_seq || row0 < 0 || keep < 1 || keep > 512 || n_draft < 0) {
         snprintf(err, err_len, "bad MTP step: seq=%d keep=%d n_draft=%d", seq, keep, n_draft);
         return -1;
     }
@@ -107,7 +110,7 @@ int sg_mtp_step(sg_mtp * m, llama_context * target, int seq, const int32_t * tok
     llama_batch batch = llama_batch_init(keep, n_embd, 1);
     batch.token       = (llama_token *) malloc(sizeof(llama_token) * (size_t) keep);
     for (int i = 0; i < keep; ++i) {
-        const float * h = i == 0 ? pending : llama_get_embeddings_nextn_ith(target, i - 1);
+        const float * h = i == 0 ? pending : llama_get_embeddings_nextn_ith(target, row0 + i - 1);
         if (!h) {
             llama_batch_free(batch);
             snprintf(err, err_len, "the target produced no next-token hidden state");
@@ -122,7 +125,7 @@ int sg_mtp_step(sg_mtp * m, llama_context * target, int seq, const int32_t * tok
         snprintf(err, err_len, "MTP catch-up decode failed with %d", rc);
         return -1;
     }
-    const float * last = llama_get_embeddings_nextn_ith(target, keep - 1);
+    const float * last = llama_get_embeddings_nextn_ith(target, row0 + keep - 1);
     if (!last) {
         snprintf(err, err_len, "the target produced no next-token hidden state");
         return -1;

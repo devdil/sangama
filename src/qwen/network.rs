@@ -94,6 +94,13 @@ fn mtp_p_min() -> f32 {
     })
 }
 
+/// Frames of different sessions share a device call unless `SANGAMA_BATCH=0`, which runs them
+/// one at a time, e.g. to compare the two.
+fn batching() -> bool {
+    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| std::env::var("SANGAMA_BATCH").map_or(true, |v| v != "0"))
+}
+
 fn argmax(values: &[f32]) -> usize {
     (1..values.len()).fold(0, |best, i| if values[i] > values[best] { i } else { best })
 }
@@ -159,6 +166,12 @@ impl Resident {
         }
     }
 }
+/// A frame waiting for the engine, and where its result goes.
+struct Job {
+    frame: Frame,
+    received_ms: f64,
+    reply: tokio::sync::oneshot::Sender<Result<Frame>>,
+}
 /// A detached frame waiting to be passed to the next stage.
 struct Outgoing {
     next: SocketAddr,
@@ -174,6 +187,8 @@ struct Delivered {
 struct Worker {
     /// The engine and its sessions. Frames wait here for their turn on the device.
     resident: Arc<Mutex<Resident>>,
+    /// Frames that arrived while the engine was busy; they run together when it is free.
+    queue: Arc<Mutex<Vec<Job>>>,
     /// Live sessions, readable without waiting for the engine.
     active: Arc<AtomicUsize>,
     /// The last stage's latest result for each session, until its client collects it.
@@ -292,6 +307,7 @@ pub async fn serve(
             model,
             sessions: HashMap::new(),
         })),
+        queue: Arc::default(),
         active: Arc::default(),
         results: Arc::default(),
         delivered: Arc::new(tokio::sync::watch::channel(0).0),
@@ -631,22 +647,22 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
         Ok(frame) => frame,
         Err(err) => return error(StatusCode::BAD_REQUEST, err),
     };
-    let worker = state.clone();
     let session_id = frame.header.session.clone();
     let (position, seq_len) = (frame.header.position, frame.header.seq_len);
-    let calculation = state
-        .with_engine(move |resident| {
-            let session = frame.header.session.clone();
-            match compute(&worker, resident, frame, received_ms) {
-                Ok(frame) => (Ok(frame), vec![]),
-                Err(error) => {
-                    // A failed step leaves this stage's cache in an unknown state.
-                    resident.end(&session);
-                    (Err(error), vec![session])
-                }
-            }
-        })
-        .await;
+    // Frames that arrive while the engine is busy wait in the queue and run together.
+    let (reply, computed) = tokio::sync::oneshot::channel();
+    state
+        .queue
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(Job {
+            frame,
+            received_ms,
+            reply,
+        });
+    let worker = state.clone();
+    tokio::task::spawn_blocking(move || worker.drain());
+    let calculation = computed.await.context("engine task failed");
     let result: Result<Frame> = async {
         let frame = calculation??;
         if frame.header.detached {
@@ -699,13 +715,62 @@ async fn discard(state: &Worker, session: &str) {
         .await;
 }
 
-/// Runs one frame of a session through this stage's layers, starting the session if new.
-fn compute(
-    worker: &Worker,
-    resident: &mut Resident,
-    frame: Frame,
-    received_ms: f64,
-) -> Result<Frame> {
+impl Worker {
+    /// Runs every queued frame, one per session at a time, until the queue is empty. Whichever
+    /// caller gets the engine first serves the frames of all that are waiting.
+    fn drain(&self) {
+        let mut resident = self.engine();
+        let mut ended = resident.expire();
+        loop {
+            let jobs = std::mem::take(&mut *self.queue.lock().unwrap_or_else(|e| e.into_inner()));
+            if jobs.is_empty() {
+                break;
+            }
+            // A session's frames run in order: a second frame waits for the next round.
+            let mut seen = std::collections::HashSet::new();
+            let (jobs, later): (Vec<Job>, Vec<Job>) = jobs
+                .into_iter()
+                .partition(|job| seen.insert(job.frame.header.session.clone()));
+            if !later.is_empty() {
+                let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+                queue.splice(0..0, later);
+            }
+            let sessions: Vec<String> = jobs
+                .iter()
+                .map(|j| j.frame.header.session.clone())
+                .collect();
+            let (frames, replies): (Vec<_>, Vec<_>) = jobs
+                .into_iter()
+                .map(|j| ((j.frame, j.received_ms), j.reply))
+                .unzip();
+            let results = compute_batch(self, &mut resident, frames);
+            for ((result, reply), session) in results.into_iter().zip(replies).zip(sessions) {
+                if result.is_err() {
+                    // A failed step leaves this stage's cache in an unknown state.
+                    resident.end(&session);
+                    ended.push(session);
+                }
+                let _ = reply.send(result);
+            }
+        }
+        self.active
+            .store(resident.sessions.len(), Ordering::Relaxed);
+        drop(resident);
+        self.forget(&ended);
+    }
+}
+
+/// What a stage computed for one frame.
+enum Output {
+    /// Hidden states of every position, or the final stage's logits of the last position.
+    Values(Vec<f32>),
+    /// The final stage's greedy token after every position.
+    Tokens(Vec<u32>),
+}
+
+/// Finds or starts the frame's session, rewinds rejected drafts, and notes how to undo this
+/// frame if it carries drafts. Returns the session's slot and that note.
+fn prepare(resident: &mut Resident, frame: &Frame) -> Result<(usize, Option<Draft>)> {
     let h = &frame.header;
     let session = match resident.sessions.get_mut(&h.session) {
         Some(session) => session,
@@ -758,55 +823,201 @@ fn compute(
     } else {
         None
     };
+    Ok((slot, draft))
+}
+
+/// Runs one frame of each session through this stage's layers. Frames of different sessions
+/// share one device call when the engine can batch; each result is in the order given.
+fn compute_batch(
+    worker: &Worker,
+    resident: &mut Resident,
+    frames: Vec<(Frame, f64)>,
+) -> Vec<Result<Frame>> {
+    let last = worker.info.shard.index + 1 == worker.manifest.shards.len();
+    let mut results: Vec<Option<Result<Frame>>> = frames.iter().map(|_| None).collect();
+    // Index into `frames`, slot, undo note.
+    let mut ready: Vec<(usize, usize, Option<Draft>)> = Vec::new();
+    for (index, (frame, _)) in frames.iter().enumerate() {
+        match prepare(resident, frame) {
+            Ok((slot, draft)) => ready.push((index, slot, draft)),
+            Err(error) => results[index] = Some(Err(error)),
+        }
+    }
     let started = Instant::now();
     let started_ms = unix_ms();
-    let last = h.route.len() == 1;
-    let (drafted, mut values) = if last && h.sample && h.speculative {
-        let ids = resident
-            .model
-            .greedy(slot, &h.tokens, &frame.values, h.seq_len, h.position)?;
-        (Some(ids), vec![])
-    } else {
-        let values =
-            resident
-                .model
-                .forward(slot, &h.tokens, &frame.values, h.seq_len, h.position)?;
-        (None, values)
-    };
-    // The final stage's MTP head sees every kept position, then drafts after the token the
-    // model chose: the drafts it verified up to the first rejection, then its own token.
-    let drafts = if last && !h.inputs.is_empty() && resident.model.has_mtp() {
-        let (keep, next) = match &drafted {
-            Some(ids) => {
-                let accepted = h.inputs[1..]
-                    .iter()
-                    .zip(ids)
-                    .take_while(|(draft, model)| draft == model)
-                    .count();
-                (accepted + 1, ids[accepted])
-            }
-            None => (h.seq_len, argmax(&values) as u32),
-        };
-        let wanted = if h.sample { h.mtp_drafts } else { 0 };
-        let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
-        resident.model.mtp_step(
-            slot,
-            &h.inputs[..keep],
-            h.position,
-            next,
-            wanted.min(room),
-            mtp_p_min(),
-        )?
+    // The final stage batches only frames that want a sampled token: a batch returns tokens.
+    let together: Vec<usize> = if resident.model.batches() && batching() {
+        ready
+            .iter()
+            .enumerate()
+            .filter(|(_, (index, _, _))| !last || frames[*index].0.header.sample)
+            .map(|(k, _)| k)
+            .collect()
     } else {
         vec![]
     };
+    // Output and first batch row of each ready frame.
+    let mut outputs: Vec<Option<Result<(Output, usize)>>> = ready.iter().map(|_| None).collect();
+    if together.len() > 1 {
+        let items: Vec<(usize, usize, usize)> = together
+            .iter()
+            .map(|&k| {
+                let h = &frames[ready[k].0].0.header;
+                (ready[k].1, h.seq_len, h.position)
+            })
+            .collect();
+        let tokens: Vec<u32> = together
+            .iter()
+            .flat_map(|&k| frames[ready[k].0].0.header.tokens.iter().copied())
+            .collect();
+        let values: Vec<f32> = together
+            .iter()
+            .flat_map(|&k| frames[ready[k].0].0.values.iter().copied())
+            .collect();
+        let width = worker.manifest.hidden_size();
+        match resident.model.forward_many(&items, &tokens, &values) {
+            Ok(many) => {
+                let mut row = 0;
+                for (&k, item) in together.iter().zip(&items) {
+                    let n = item.1;
+                    outputs[k] = Some(Ok((
+                        match &many {
+                            super::engine::Many::Hidden(all) => {
+                                Output::Values(all[row * width..(row + n) * width].to_vec())
+                            }
+                            super::engine::Many::Tokens(ids) => {
+                                let ids = &ids[row..row + n];
+                                // A frame without drafts wants only the token after its last position.
+                                Output::Tokens(if frames[ready[k].0].0.header.speculative {
+                                    ids.to_vec()
+                                } else {
+                                    vec![ids[n - 1]]
+                                })
+                            }
+                        },
+                        row,
+                    )));
+                    row += n;
+                }
+            }
+            Err(error) => {
+                let message = error.to_string();
+                for &k in &together {
+                    outputs[k] = Some(Err(anyhow::anyhow!("{message}")));
+                }
+            }
+        }
+    }
+    for (k, (index, slot, _)) in ready.iter().enumerate() {
+        if outputs[k].is_some() {
+            continue;
+        }
+        let (frame, _) = &frames[*index];
+        let h = &frame.header;
+        outputs[k] = Some(if last && h.sample && h.speculative {
+            resident
+                .model
+                .greedy(*slot, &h.tokens, &frame.values, h.seq_len, h.position)
+                .map(|ids| (Output::Tokens(ids), 0))
+        } else {
+            resident
+                .model
+                .forward(*slot, &h.tokens, &frame.values, h.seq_len, h.position)
+                .map(|values| (Output::Values(values), 0))
+        });
+    }
+    // The final stage's MTP head sees every kept position of each frame, then drafts after
+    // the token the model chose: the drafts it verified up to the first rejection, then its
+    // own token. This must follow the decode it reads hidden states from.
+    let mut drafts: Vec<Vec<u32>> = ready.iter().map(|_| vec![]).collect();
+    if last && resident.model.has_mtp() {
+        for (k, (index, slot, _)) in ready.iter().enumerate() {
+            let h = &frames[*index].0.header;
+            let Some(Ok((output, row))) = &outputs[k] else {
+                continue;
+            };
+            if h.inputs.is_empty() {
+                continue;
+            }
+            let (keep, next) = match output {
+                Output::Tokens(ids) if h.speculative => {
+                    let accepted = h.inputs[1..]
+                        .iter()
+                        .zip(ids)
+                        .take_while(|(draft, model)| draft == model)
+                        .count();
+                    (accepted + 1, ids[accepted])
+                }
+                Output::Tokens(ids) => (h.seq_len, ids[0]),
+                Output::Values(values) => (h.seq_len, argmax(values) as u32),
+            };
+            let wanted = if h.sample { h.mtp_drafts } else { 0 };
+            let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
+            match resident.model.mtp_step(
+                *slot,
+                *row,
+                &h.inputs[..keep],
+                h.position,
+                next,
+                wanted.min(room),
+                mtp_p_min(),
+            ) {
+                Ok(proposed) => drafts[k] = proposed,
+                Err(error) => outputs[k] = Some(Err(error)),
+            }
+        }
+    }
     if let Some(ms) = simulated_ms_per_layer_token() {
         let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
+        let positions: usize = ready
+            .iter()
+            .map(|(i, _, _)| frames[*i].0.header.seq_len)
+            .sum();
         std::thread::sleep(Duration::from_secs_f64(
-            ms * layers * h.seq_len as f64 / 1000.0,
+            ms * layers * positions as f64 / 1000.0,
         ));
     }
     let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+    let mut frames: Vec<Option<(Frame, f64)>> = frames.into_iter().map(Some).collect();
+    for (k, (index, _, draft)) in ready.into_iter().enumerate() {
+        let (frame, received_ms) = frames[index].take().expect("each frame is finished once");
+        let output = outputs[k].take().expect("every ready frame was computed");
+        results[index] = Some(output.and_then(|(output, _)| {
+            finish(
+                worker,
+                resident,
+                frame,
+                output,
+                std::mem::take(&mut drafts[k]),
+                draft,
+                Trace {
+                    shard: worker.info.shard.index,
+                    start: worker.info.shard.start,
+                    end: worker.info.shard.end,
+                    forward_ms: elapsed,
+                    started_ms,
+                    received_ms,
+                },
+            )
+        }));
+    }
+    results
+        .into_iter()
+        .map(|r| r.expect("every frame has a result"))
+        .collect()
+}
+
+/// Records the session's progress and turns a computed frame into the one to pass on.
+fn finish(
+    worker: &Worker,
+    resident: &mut Resident,
+    frame: Frame,
+    output: Output,
+    drafts: Vec<u32>,
+    draft: Option<Draft>,
+    trace: Trace,
+) -> Result<Frame> {
+    let h = &frame.header;
     let session = resident
         .sessions
         .get_mut(&h.session)
@@ -817,14 +1028,7 @@ fn compute(
     let mut header = frame.header;
     header.tokens.clear();
     header.route.remove(0);
-    header.trace.push(Trace {
-        shard: worker.info.shard.index,
-        start: worker.info.shard.start,
-        end: worker.info.shard.end,
-        forward_ms: elapsed,
-        started_ms,
-        received_ms,
-    });
+    header.trace.push(trace);
     header.kind = if header.route.is_empty() {
         Kind::Logits
     } else {
@@ -834,17 +1038,22 @@ fn compute(
         header.inputs.clear();
         header.drafts = drafts;
     }
-    if let Some(ids) = drafted {
-        header.tokens = ids;
-        header.kind = Kind::Sampled;
-    } else if header.route.is_empty() && header.sample {
-        ensure!(
-            values.len() == worker.manifest.vocab_size() && values.iter().all(|v| v.is_finite()),
-            "invalid final logits"
-        );
-        header.tokens = vec![argmax(&values) as u32];
-        header.kind = Kind::Sampled;
-        values.clear();
+    let mut values = vec![];
+    match output {
+        Output::Tokens(ids) => {
+            header.tokens = ids;
+            header.kind = Kind::Sampled;
+        }
+        Output::Values(computed) if header.route.is_empty() && header.sample => {
+            ensure!(
+                computed.len() == worker.manifest.vocab_size()
+                    && computed.iter().all(|v| v.is_finite()),
+                "invalid final logits"
+            );
+            header.tokens = vec![argmax(&computed) as u32];
+            header.kind = Kind::Sampled;
+        }
+        Output::Values(computed) => values = computed,
     }
     Ok(Frame { header, values })
 }

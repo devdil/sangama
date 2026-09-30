@@ -16,6 +16,8 @@ typedef struct sg_stage {
     int n_embd;
     int n_vocab;
     int n_seq;
+    // The final stage reports every position, not only the last: its MTP head reads them all.
+    int output_all;
 } sg_stage;
 
 static void quiet_log(enum ggml_log_level level, const char * text, void * data) {
@@ -164,6 +166,7 @@ int sg_stage_rollback(sg_stage * s, int seq, int pos) {
     }
     return llama_memory_seq_rm(llama_get_memory(s->ctx), seq, pos, -1) ? 1 : 0;
 }
+void sg_stage_output_all(sg_stage * s, int on) { s->output_all = on; }
 // The stage's llama.cpp context, for the MTP head (shim_mtp.cpp).
 struct llama_context * sg_stage_context(sg_stage * s) { return s->ctx; }
 
@@ -204,7 +207,7 @@ static int run(sg_stage * s, int seq, const int32_t * tokens, const float * hidd
     for (int i = 0; i < n; ++i) {
         batch.n_seq_id[i] = 1;
         batch.seq_id[i][0] = seq;
-        batch.logits[i] = last ? (all_logits || i == n - 1) : 1;
+        batch.logits[i] = last ? (all_logits || s->output_all || i == n - 1) : 1;
     }
     batch.n_tokens = n;
     const int rc = llama_decode(s->ctx, batch);
@@ -262,6 +265,85 @@ int sg_stage_decode_greedy(sg_stage * s, int seq, const int32_t * tokens, const 
             }
         }
         ids[i] = best;
+    }
+    return 0;
+}
+
+// Decodes one frame for each of n_items sequences in a single llama_decode, so the device works
+// on several sessions at once. Item i has ns[i] positions of sequence seqs[i] starting at
+// poss[i]; tokens (first stage) or hidden states (later stages) are concatenated in item order.
+// A non-final stage writes every position's hidden state to out, in the same order. The final
+// stage writes the greedy token after every position to ids.
+int sg_stage_decode_many(sg_stage * s, int n_items, const int * seqs, const int * ns, const int * poss,
+                         const int32_t * tokens, const float * hidden, float * out, size_t out_len,
+                         int32_t * ids, char * err, size_t err_len) {
+    const int last = s->il_end == s->n_layer;
+    const int takes_tokens = s->il_beg == 0;
+    int total = 0;
+    for (int k = 0; k < n_items; ++k) {
+        if (ns[k] <= 0 || seqs[k] < 0 || seqs[k] >= s->n_seq) {
+            snprintf(err, err_len, "bad batch item %d: seq=%d n=%d", k, seqs[k], ns[k]);
+            return -1;
+        }
+        total += ns[k];
+    }
+    if (n_items <= 0 || total > 512) {
+        snprintf(err, err_len, "bad batch: %d items, %d positions", n_items, total);
+        return -1;
+    }
+    if ((takes_tokens && !tokens) || (!takes_tokens && !hidden) || (last && !ids) ||
+        (!last && out_len != (size_t) total * (size_t) s->n_embd)) {
+        snprintf(err, err_len, "batch input or output does not match this stage");
+        return -1;
+    }
+    const enum llama_rope_type rope = llama_model_rope_type(s->model);
+    const int sections = (!takes_tokens && (rope == LLAMA_ROPE_TYPE_MROPE || rope == LLAMA_ROPE_TYPE_IMROPE)) ? 4 : 1;
+    struct llama_batch batch = llama_batch_init(total * sections, takes_tokens ? 0 : s->n_embd, 1);
+    if (takes_tokens) {
+        memcpy(batch.token, tokens, (size_t) total * sizeof(int32_t));
+    } else {
+        memcpy(batch.embd, hidden, (size_t) total * (size_t) s->n_embd * sizeof(float));
+    }
+    int row = 0;
+    for (int k = 0; k < n_items; ++k) {
+        for (int i = 0; i < ns[k]; ++i, ++row) {
+            for (int j = 0; j < sections; ++j) {
+                batch.pos[j * total + row] = poss[k] + i;
+            }
+            batch.n_seq_id[row] = 1;
+            batch.seq_id[row][0] = seqs[k];
+            batch.logits[row] = 1;
+        }
+    }
+    batch.n_tokens = total;
+    const int rc = llama_decode(s->ctx, batch);
+    llama_batch_free(batch);
+    if (rc != 0) {
+        snprintf(err, err_len, "llama_decode failed with %d", rc);
+        return -1;
+    }
+    for (int i = 0; i < total; ++i) {
+        if (last) {
+            const float * logits = llama_get_logits_ith(s->ctx, i);
+            if (!logits) {
+                snprintf(err, err_len, "llama.cpp returned no logits for row %d", i);
+                return -1;
+            }
+            int best = 0;
+            for (int v = 1; v < s->n_vocab; ++v) {
+                if (logits[v] > logits[best]) {
+                    best = v;
+                }
+            }
+            ids[i] = best;
+        } else {
+            const float * row_out = llama_get_embeddings_ith(s->ctx, i);
+            if (!row_out) {
+                snprintf(err, err_len, "llama.cpp returned no hidden state for row %d", i);
+                return -1;
+            }
+            memcpy(out + (size_t) i * (size_t) s->n_embd, row_out, (size_t) s->n_embd * sizeof(float));
+        }
     }
     return 0;
 }
