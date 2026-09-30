@@ -37,6 +37,8 @@ const LIMIT: usize = crate::qwen::wire::MAX_FRAME_BYTES;
 const BRIDGE_CONCURRENCY: usize = 64;
 /// Requests this node serves for peers at once.
 const SERVE_CONCURRENCY: usize = 64;
+/// Calls to peers this node has in flight at once.
+const PENDING_CALLS: usize = 256;
 /// Streams at once over one connection, e.g. one relayed circuit between two stages.
 const STREAMS_PER_CONNECTION: usize = 128;
 /// Per-peer requests and reply bytes in each 60-second window.
@@ -637,7 +639,7 @@ pub async fn run(path: &Path) -> Result<()> {
     } else {
         None
     };
-    let (tx, mut rx) = mpsc::channel(32);
+    let (tx, mut rx) = mpsc::channel(PENDING_CALLS);
     let bridges: Arc<HashMap<SocketAddr, PeerId>> = Arc::new(
         c.bridges
             .iter()
@@ -807,7 +809,7 @@ pub async fn run(path: &Path) -> Result<()> {
                 Command::Membership(s)=> {if s.snapshot.issued>=membership.snapshot.issued {membership=s;}},
                 Command::Standing(s)=>standing=s,
                 Command::Call {peer,request,result}=>{
-                    if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || pending.len()>=16 {let _=result.send(Reply::error(403,"Membership unavailable or capacity exceeded"));continue;}
+                    if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || pending.len()>=PENDING_CALLS {let _=result.send(Reply::error(403,"Membership unavailable or capacity exceeded"));continue;}
                     // Dial the relay circuit ourselves: cached addresses can go stale when a peer
                     // restarts, and a failed dial otherwise never tries the circuit.
                     if !swarm.is_connected(&peer) && let Some(relay)=&c.relay {
