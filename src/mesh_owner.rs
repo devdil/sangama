@@ -16,7 +16,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_CLAIMS: usize = 64;
+// Workers can serve many sessions at once (`qwen-worker --slots`, up to 256).
+const MAX_CLAIMS: usize = 256;
 // Longer than the worker's 60 s session and 120 s lease expiry, so others can claim first.
 const COOLDOWN: Duration = Duration::from_secs(180);
 
