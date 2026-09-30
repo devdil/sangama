@@ -1,0 +1,1 @@
+{"prefix": "a14m4", "concurrency": 4, "ok": 4, "failed": 0, "wall_s": 6.5, "tokens": 512, "aggregate_tps": 78.57, "steady_tps": 123.5, "stream_tps_p50": 28.6, "stream_tps_p5": 25.97, "ttft_s_p50": 0.26, "ttft_s_p95": 0.29, "identical_to_solo": "1/4", "mtp": 4, "tokens_per_pass": 3.3, "drafts_accepted": "357/593"}

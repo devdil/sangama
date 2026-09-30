@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-397B across three US states, with guesses - Sangama</title>
+<meta name="description" content="A 397B model on three GPUs in three US states: one request at 28 to 49 tokens per second with the model's draft layer, against 12 without.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>Qwen3.5-397B across three US states, with guesses</h1>
+<p><i>30 September 2026, round 14</i></p>
+
+<p>In our <a href="/results/qwen35-397b-us-spread.html">previous test</a>, one request crossing three US states ran at about 10 tokens per second. Almost all of each trip was network time. When the model guesses the next few tokens and one trip checks them all, the same network time yields several tokens. We had not measured that across a distance since making wrong guesses cheap to undo.</p>
+
+<p><b>Result:</b></p>
+<ul>
+<li><b>One request:</b> 28 to 49 tokens per second with guesses, against 12 without. Code is at the top of that range, prose at the bottom.</li>
+<li><b>Several requests at once:</b> totals were higher with guesses, but a fault appeared and we do not trust those numbers yet.</li>
+</ul>
+
+<hr>
+
+<h2>Setup</h2>
+<table>
+<tr><th>Model</th><td>Qwen3.5-397B-A17B, 4-bit, 3 stages of 20 layers</td></tr>
+<tr><th>Stages</th><td>96 GB GPUs in Maryland, Wisconsin and Texas</td></tr>
+<tr><th>Relay and client</th><td>One machine in Colorado</td></tr>
+<tr><th>Network</th><td>Direct connections over QUIC</td></tr>
+<tr><th>Cost</th><td>About $4.95 an hour</td></tr>
+</table>
+
+<p>A trip without guesses took 82 ms: 15 ms of GPU computing and 67 ms of network and handling.</p>
+
+<h2>One request</h2>
+
+<p>Tokens per second, 128 tokens per run. "Guesses asked for" is what the client requests; the last machine decides how many to make.</p>
+
+<div class="wide">
+<table>
+<tr><th>Guesses asked for</th><th>Code</th><th>Explanation</th><th>Factual answer</th></tr>
+<tr><td>none</td><td>12.2</td><td>12.2</td><td>12.2</td></tr>
+<tr><td>2</td><td>27.9</td><td>25.8</td><td>27.0</td></tr>
+<tr><td>4</td><td>41.2</td><td>30.2</td><td>31.0</td></tr>
+<tr><td>6</td><td>46.0</td><td>28.8</td><td>29.0</td></tr>
+<tr><td>8</td><td><b>48.6</b></td><td>28.2</td><td>28.2</td></tr>
+</table>
+</div>
+
+<ul>
+<li><b>A trip with four guesses took about 100 ms</b> and produced three to four tokens.</li>
+<li><b>The first token</b> arrived in a quarter to four tenths of a second.</li>
+</ul>
+
+<h2>How many guesses to make</h2>
+
+<p>More guesses help code, where most are right, and hurt prose, where the later ones are usually wrong and still cost computing. With a fixed eight guesses, code ran at 50 tokens per second and prose at 25 to 27.</p>
+
+<p>The last machine now decides for each request. It keeps a record of how often that request's first guess, first two, and so on were right, estimates how long a trip takes with each count, and picks the count that gives the most tokens per second. With eight asked for, prose ran at 28 and code kept 49.</p>
+
+<p class="small">We tried two simpler rules first. One cut guesses whenever the last GPU was busy, which lost speed here. One used a single success rate for all requests, which made code guess too little after prose. The rule has only been tested where the network dominates.</p>
+
+<h2>Several requests at once</h2>
+
+<div class="wide">
+<table>
+<tr><th>Requests at once</th><th>Total without guesses</th><th>Total with guesses</th></tr>
+<tr><td>4</td><td>40</td><td>72-80 (not verified)</td></tr>
+<tr><td>8</td><td>73</td><td>124-137 (not verified)</td></tr>
+<tr><td>16</td><td>128-133</td><td>144-173 (not verified)</td></tr>
+<tr><td>32</td><td>205</td><td>202 (not verified)</td></tr>
+</table>
+</div>
+
+<p class="small">Tokens per second over the whole run, start-up included.</p>
+
+<p><b>The fault.</b> In two of the runs with guesses, 2 of 16 requests picked up text from another request and stopped early. One answer about splitting a model across computers ended with "the capital city of Australia".</p>
+
+<ul>
+<li><b>Likely cause:</b> when the requests in one step guess different numbers of tokens, the step could be put together in a way the model runtime's undo does not handle. With every request guessing the same number, as in earlier tests, this did not arise.</li>
+<li><b>Status:</b> we found and fixed this after the machines were returned, so the fix is not yet tested on the large model. Until it is, the numbers in the right-hand column stand as unverified.</li>
+<li><b>One request at a time is not affected.</b></li>
+</ul>
+
+<h2>What else the testing caught</h2>
+<ul>
+<li><b>A client could not reconnect after a few idle minutes.</b> It redialled each machine at every address it remembered, including an address that only means something on that machine itself. On our test client that address reached the relay, and every request failed. It now redials only public addresses and the relay route.</li>
+<li><b>Memory sets the number of requests a machine can hold.</b> 48 requests with room to undo eight guesses did not fit in 96 GB. 32 with room for two did.</li>
+<li><b>Guessing more than the machines can undo is very slow.</b> Six or eight guesses with room for four took 300 to 530 ms per trip.</li>
+</ul>
+
+<h2>QUIC and a bad link</h2>
+
+<p>Early in the test, the link to one machine was dropping packets, and one request over TCP ran at 5.5 tokens per second. By the time we switched to QUIC the link had recovered, so we did not get to compare the two under loss. On the clean link both ran at 12.</p>
+
+<h2>Limits of this test</h2>
+<ul>
+<li>One fleet, single runs, three prompts.</li>
+<li>The middle machine was in Wisconsin, not Utah as in the previous test, so the two tests' plain speeds are not the same route.</li>
+<li>Output with guesses can differ from plain output at close word choices, as before.</li>
+</ul>
+
+<h2>Next</h2>
+<ul>
+<li><b>Re-run guesses with several requests</b> with the fix, checking every request against its solo run.</li>
+<li><b>Send each next step from the last machine straight to the first</b>, not through the user's computer.</li>
+<li><b>A small model on the user's computer that guesses ahead</b> of the large one.</li>
+</ul>
+
+<p>Full report and raw data: <a href="https://github.com/devdil/sangama/blob/main/docs/test-results/qwen35-397b-round14-2026-09-30.md">docs/test-results</a>.</p>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:diljit@diljitpr.net">diljit@diljitpr.net</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>

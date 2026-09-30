@@ -1,0 +1,1 @@
+{"prefix": "a14m0", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 16.0, "tokens": 2048, "aggregate_tps": 127.82, "steady_tps": 154.4, "stream_tps_p50": 9.65, "stream_tps_p5": 9.43, "ttft_s_p50": 0.28, "ttft_s_p95": 0.49, "identical_to_solo": "6/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

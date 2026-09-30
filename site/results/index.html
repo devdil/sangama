@@ -24,6 +24,7 @@ th { background: #eee; }
 
 <table>
 <tr><th>Date</th><th>Title</th></tr>
+<tr><td>30 Sep 2026</td><td><a href="/results/qwen35-397b-drafts-across-distance.html">Qwen3.5-397B across three US states, with guesses</a><br><span class="small">One request runs at 28 to 49 tokens per second, against 12 without guesses. Guessing with several requests at once showed a fault and is not yet trusted.</span></td></tr>
 <tr><td>30 Sep 2026</td><td><a href="/results/qwen35-397b-us-spread.html">Qwen3.5-397B across three US states: relay or direct, TCP or QUIC</a><br><span class="small">Direct connections make one request 17% faster; QUIC matches TCP in speed and halves the wait for the first token.</span></td></tr>
 <tr><td>30 Sep 2026</td><td><a href="/results/qwen35-397b-drafts-under-load.html">Qwen3.5-397B: guesses under load</a><br><span class="small">Guessing ahead is correct with shared steps after a fix, but lowers the total under load: 174 tokens per second against 233 for 16 requests.</span></td></tr>
 <tr><td>30 Sep 2026</td><td><a href="/results/qwen35-397b-batching.html">Qwen3.5-397B: several requests per step</a><br><span class="small">Each GPU works on several waiting requests at once: total throughput from 119 to 403 tokens per second.</span></td></tr>

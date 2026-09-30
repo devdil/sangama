@@ -1,0 +1,1 @@
+{"prefix": "g14m2", "concurrency": 32, "ok": 32, "failed": 0, "wall_s": 20.2, "tokens": 4096, "aggregate_tps": 202.49, "steady_tps": 279.1, "stream_tps_p50": 8.68, "stream_tps_p5": 7.59, "ttft_s_p50": 0.45, "ttft_s_p95": 1.14, "identical_to_solo": "8/32", "mtp": 2, "tokens_per_pass": 2.4, "drafts_accepted": "2389/2973"}

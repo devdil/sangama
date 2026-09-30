@@ -1,0 +1,1 @@
+{"prefix": "b14m2", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 11.9, "tokens": 2048, "aggregate_tps": 172.82, "steady_tps": 232.7, "stream_tps_p50": 14.38, "stream_tps_p5": 13.33, "ttft_s_p50": 0.36, "ttft_s_p95": 0.6, "identical_to_solo": "7/16", "mtp": 2, "tokens_per_pass": 2.55, "drafts_accepted": "1246/1542"}

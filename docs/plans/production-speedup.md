@@ -32,6 +32,8 @@ Round 10 tested these streams on three 96 GB cards in one datacenter. Results ar
 | E. Per-hop overhead | Cheap clean-up only. Measured 1.3 ms per hop on the close fleet. |
 | F. Fewer, larger stages | Done by layout: 3 stages ran one request at 48 tok/s, 107 with drafts. |
 | G. Batching | Built (round 11): plain throughput 119 to 403 tok/s at 48 requests, 449 at 64. Drafts with batching were wrong on the fleet at first; the fix was validated in round 12, where drafts under load ran slower than plain (174 against 233 tok/s at 16 requests). |
+| H. Drafts across distance (round 14) | One request across three states: 12 tok/s plain, 28–49 with drafts. The final stage chooses the draft count per request. Drafts with several requests at once mixed sessions in 4 of 32 requests; a grouping fix (`d003894`) is untested on the fleet. |
+| I. Ring closure, front drafter, prefix cache, stable batch shapes | Researched, not built. Ring closure: about 15 ms off each spread pass. Front drafter: estimated 40–68 tok/s for one request. Prefix cache: only helps long shared prefixes. Stable shapes: a single frame costs 7–8 ms with many sessions live against 4.7 ms alone. |
 
 ## Work streams
 
