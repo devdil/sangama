@@ -37,7 +37,9 @@ Batching several sessions into one `llama_decode` call is left for later. At ~1 
 - **Slot limit:** four reservations succeed, a fifth gets `409 all of this worker's slots are in use`, and a reset frees a slot for it.
 - Full `cargo test` suite, `cargo clippy` and `cargo fmt --check` pass.
 
-**Not yet verified:** Qwen3.5 mixes attention with recurrent (Gated DeltaNet) layers. The 0.5B test model is attention-only, so per-slot recurrent state is first exercised on the fleet. The first fleet step therefore repeats the solo-vs-concurrent token comparison before any throughput measurement.
+**Verified on the 397B model (w00, stage 0, RTX 4090, 30 Sep):** `first_stage_slots_are_isolated` runs layers 0–2 (`qwen35moe`, recurrent) in four slots, interleaved, and every output is bit-identical to running one session at a time.
+
+**Memory per slot.** Unpatched, llama.cpp gave each slot cache for all 60 layers: 186 MB of recurrent state and 120 MB of attention KV at 4096 tokens, about 306 MB, so 32 slots would not fit in 16 GB. `patches/stage-memory-layers.patch` limits the cache to the stage's own layers. Stage 0's four slots went from 745 MB of recurrent state to 50 MB (~12 MB per slot), and to 0 MB of KV, since layers 0–2 have no attention layer. Stages with one attention layer add ~8 MB per slot at 4096 tokens. 32 slots now need under 1 GB per stage.
 
 ## Fleet run
 
