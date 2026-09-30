@@ -87,6 +87,33 @@ th { background: #eee; }
 <li><b>Nearby workers (rounds 5 and 6).</b> We measured each worker's distance to the relay and replaced the farthest with machines in the relay's datacenter, including the last stage, whose distance counts twice per token. Decode speed more than doubled.</li>
 </ol>
 
+<h2 id="spec">Speculative decoding: correct, but slower (for now)</h2>
+
+<p>Speculative decoding guesses several tokens ahead and has the model check all the guesses in one pass. When the guesses are right, one trip through all 20 workers yields several tokens instead of one. Since our time goes almost entirely to that trip, this was the obvious thing to try.</p>
+
+<p><b>How it works here:</b></p>
+<ul>
+<li>The client guesses up to 4 tokens per step by looking back in the text: if the last 2-4 tokens appeared earlier, it guesses whatever followed them then.</li>
+<li>Before checking a batch of guesses, each worker saves a snapshot of its state, including the model's recurrent (linear-attention) state.</li>
+<li>The last worker returns the model's own choice at every position, so the client sees how many guesses were right.</li>
+<li>If some were wrong, the next message tells every worker to restore its snapshot and replay only the accepted tokens locally. This needs no extra network trip.</li>
+</ul>
+
+<p><b>Correctness:</b> every speculative run produced exactly the same tokens as normal decoding.</p>
+
+<p><b>Speed:</b> the model accepted few of these guesses, so saving, restoring and replaying on all 20 workers cost more than the trips it saved.</p>
+
+<table>
+<tr><th>Test</th><th>Guesses accepted</th><th>Without speculation</th><th>With speculation</th></tr>
+<tr><td>Code</td><td>7 of 38 (18%)</td><td>2.1-2.7 tok/s</td><td>1.3-1.4 tok/s</td></tr>
+<tr><td>Summary</td><td>6 of 24 (25%)</td><td>1.6-2.8 tok/s</td><td>0.6-1.2 tok/s</td></tr>
+<tr><td>Essay</td><td>2 of 23 (9%)</td><td>-</td><td>-</td></tr>
+</table>
+
+<p class="small">Warm back-to-back runs, measured before round 6, while the network was slower than it is now.</p>
+
+<p><b>Status:</b> off by default. To pay off it needs better guesses: Qwen3.5 ships its own multi-token-prediction layer, reported to be right 70-80% of the time, which would mean roughly 2-2.4&times; faster decoding. That layer is not in our published slices yet. Snapshots also need to get cheaper, by saving only the recurrent state and trimming the rest.</p>
+
 <h2>What the testing caught</h2>
 <ul>
 <li><b>Relay rate limits.</b> Default relay rate limits silently disconnected most workers within minutes when many computers shared one network address. Fixed with explicit limits.</li>
@@ -97,7 +124,7 @@ th { background: #eee; }
 
 <h2>Next</h2>
 <ul>
-<li><b>Speculative decoding.</b> Built and correct: guessed tokens are checked in one trip, and every worker can roll back the ones the model rejects. But guesses copied from earlier text were right only 5-26% of the time, so it was slower. The model's own look-ahead layer should guess far better; that is next.</li>
+<li><b>Better guesses for speculative decoding.</b> Publish the model's own multi-token-prediction layer with the slices and use it to guess ahead (<a href="#spec">see above</a>).</li>
 <li><b>Automatic placement.</b> Have the scheduler pick workers close to the relay, or to each other, as we did by hand in round 5.</li>
 <li><b>Direct connections on home networks.</b> Our rented machines could not accept incoming connections, so hole punching could not be tested here.</li>
 </ul>
