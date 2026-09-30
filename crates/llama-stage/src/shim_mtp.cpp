@@ -159,11 +159,16 @@ int sg_mtp_step(sg_mtp * m, llama_context * target, int seq, int row0, const int
             }
         }
         if (p_min > 0.0f) {
-            double sum = 0.0;
+            // The draft's probability is 1 / sum(exp(logit - best)). Entries more than 16
+            // below the best add under 3% in total over a 250k vocabulary, so skip their exp.
+            const float floor = logits[best] - 16.0f;
+            float       sum   = 0.0f;
             for (int v = 0; v < m->n_vocab; ++v) {
-                sum += exp((double) logits[v] - (double) logits[best]);
+                if (logits[v] > floor) {
+                    sum += expf(logits[v] - logits[best]);
+                }
             }
-            if (1.0 / sum < p_min) {
+            if (1.0f / sum < p_min) {
                 break;
             }
         }
