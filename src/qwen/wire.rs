@@ -26,6 +26,11 @@ pub struct Trace {
     /// `started_ms` is the wait inside the worker (decode, queue for the engine, rollback).
     #[serde(default)]
     pub received_ms: f64,
+    /// Frames and positions of all sessions that this stage computed in the same turn.
+    #[serde(default)]
+    pub batch_frames: usize,
+    #[serde(default)]
+    pub batch_positions: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

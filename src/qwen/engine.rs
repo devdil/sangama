@@ -141,25 +141,27 @@ impl Engine {
         }
     }
 
-    /// Final stage with an MTP head, right after computing a batch from `position`: feed it
-    /// the kept inputs and draft up to `n_draft` tokens after `next`.
+    /// Final stage with an MTP head, right after a device call: for each frame in it, feed the
+    /// head the kept inputs and draft tokens after the one the model chose. Frames are in
+    /// increasing slot order.
     #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
-    #[allow(clippy::too_many_arguments)]
-    pub fn mtp_step(
-        &mut self,
-        slot: usize,
-        row: usize,
-        inputs: &[u32],
-        position: usize,
-        next: u32,
-        n_draft: usize,
-        p_min: f32,
-    ) -> Result<Vec<u32>> {
+    pub fn mtp_step_many(&mut self, steps: &[MtpStep], p_min: f32) -> Result<Vec<Vec<u32>>> {
         match self {
             Engine::Candle(_) => anyhow::bail!("MTP drafting needs the llama.cpp engine"),
             #[cfg(feature = "llamacpp")]
             Engine::LlamaCpp(stage) => {
-                Ok(stage.mtp_step(slot, row, inputs, position, next, n_draft, p_min)?)
+                let steps: Vec<sangama_llama_stage::MtpStep> = steps
+                    .iter()
+                    .map(|s| sangama_llama_stage::MtpStep {
+                        slot: s.slot,
+                        row: s.row,
+                        inputs: s.inputs,
+                        position: s.position,
+                        next: s.next,
+                        n_draft: s.n_draft,
+                    })
+                    .collect();
+                Ok(stage.mtp_step_many(&steps, p_min)?)
             }
         }
     }
@@ -172,4 +174,15 @@ impl Engine {
             Engine::LlamaCpp(stage) => stage.clear(slot),
         }
     }
+}
+
+/// One frame's part of an MTP step: its slot, the batch row and position it began at, the
+/// inputs that were kept, the token the model chose after them and how many to draft.
+pub struct MtpStep<'a> {
+    pub slot: usize,
+    pub row: usize,
+    pub inputs: &'a [u32],
+    pub position: usize,
+    pub next: u32,
+    pub n_draft: usize,
 }

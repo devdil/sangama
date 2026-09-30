@@ -101,18 +101,21 @@ unsafe extern "C" {
         err: *mut c_char,
         err_len: usize,
     ) -> *mut RawMtp;
-    fn sg_mtp_step(
+    fn sg_mtp_step_many(
         mtp: *mut RawMtp,
         target: *mut RawContext,
-        seq: c_int,
-        row0: c_int,
+        n_items: c_int,
+        seq: *const c_int,
+        row0: *const c_int,
+        keep: *const c_int,
+        pos: *const c_int,
+        next: *const i32,
+        n_draft: *const c_int,
         tokens: *const i32,
-        keep: c_int,
-        pos: c_int,
-        next: i32,
-        n_draft: c_int,
         p_min: f32,
+        max_draft: c_int,
         drafts: *mut i32,
+        counts: *mut c_int,
         err: *mut c_char,
         err_len: usize,
     ) -> c_int;
@@ -588,42 +591,90 @@ impl Stage {
         n_draft: usize,
         p_min: f32,
     ) -> Result<Vec<u32>> {
+        let step = MtpStep {
+            slot,
+            row,
+            inputs,
+            position,
+            next,
+            n_draft,
+        };
+        Ok(self.mtp_step_many(&[step], p_min)?.remove(0))
+    }
+
+    /// `mtp_step` for one frame of each of several slots that shared a `forward_many` call,
+    /// in increasing slot order. The head runs all of them in each of its device calls.
+    pub fn mtp_step_many(&mut self, steps: &[MtpStep], p_min: f32) -> Result<Vec<Vec<u32>>> {
         if self.mtp.is_null() {
             return Err(Error("no MTP head attached".into()));
         }
-        let seq = self.seq(slot)?;
         let int = |v: usize| c_int::try_from(v).map_err(|_| Error("parameter too large".into()));
-        let tokens: Vec<i32> = inputs
+        let token = |t: u32| i32::try_from(t).map_err(|_| Error("token out of range".into()));
+        let column = |f: &dyn Fn(&MtpStep) -> usize| -> Result<Vec<c_int>> {
+            steps.iter().map(|s| int(f(s))).collect()
+        };
+        let seq: Vec<c_int> = steps
             .iter()
-            .map(|&t| i32::try_from(t).map_err(|_| Error("token out of range".into())))
+            .map(|s| self.seq(s.slot))
             .collect::<Result<_>>()?;
-        let next = i32::try_from(next).map_err(|_| Error("token out of range".into()))?;
-        let mut drafts = vec![0i32; n_draft];
+        let row = column(&|s| s.row)?;
+        let keep = column(&|s| s.inputs.len())?;
+        let position = column(&|s| s.position)?;
+        let n_draft = column(&|s| s.n_draft)?;
+        let next: Vec<i32> = steps.iter().map(|s| token(s.next)).collect::<Result<_>>()?;
+        let tokens: Vec<i32> = steps
+            .iter()
+            .flat_map(|s| s.inputs.iter().map(|&t| token(t)))
+            .collect::<Result<_>>()?;
+        let most = steps.iter().map(|s| s.n_draft).max().unwrap_or(0);
+        let mut drafts = vec![0i32; steps.len() * most.max(1)];
+        let mut counts = vec![0 as c_int; steps.len()];
         let mut err = [0 as c_char; 256];
-        // SAFETY: live stage and head; buffers match the lengths passed.
-        let n = unsafe {
-            sg_mtp_step(
+        // SAFETY: live stage and head; every buffer matches the lengths passed.
+        let rc = unsafe {
+            sg_mtp_step_many(
                 self.mtp,
                 sg_stage_context(self.raw),
-                seq,
-                int(row)?,
+                int(steps.len())?,
+                seq.as_ptr(),
+                row.as_ptr(),
+                keep.as_ptr(),
+                position.as_ptr(),
+                next.as_ptr(),
+                n_draft.as_ptr(),
                 tokens.as_ptr(),
-                int(tokens.len())?,
-                int(position)?,
-                next,
-                int(n_draft)?,
                 p_min,
+                int(most)?,
                 drafts.as_mut_ptr(),
+                counts.as_mut_ptr(),
                 err.as_mut_ptr(),
                 err.len(),
             )
         };
-        if n < 0 {
+        if rc != 0 {
             return Err(Error(message(&err)));
         }
-        drafts.truncate(n as usize);
-        Ok(drafts.into_iter().map(|d| d as u32).collect())
+        Ok(counts
+            .iter()
+            .enumerate()
+            .map(|(i, &n)| {
+                drafts[i * most..i * most + n as usize]
+                    .iter()
+                    .map(|&d| d as u32)
+                    .collect()
+            })
+            .collect())
     }
+}
+
+/// One slot's part of an MTP step: see `Stage::mtp_step`.
+pub struct MtpStep<'a> {
+    pub slot: usize,
+    pub row: usize,
+    pub inputs: &'a [u32],
+    pub position: usize,
+    pub next: u32,
+    pub n_draft: usize,
 }
 
 impl Drop for Stage {

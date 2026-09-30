@@ -144,6 +144,51 @@ struct Saved {
 struct Resident {
     model: Engine,
     sessions: HashMap<String, Session>,
+    load: Load,
+}
+/// How much of the recent time the engine spent computing.
+struct Load {
+    since: Instant,
+    busy: Duration,
+    level: f64,
+}
+impl Load {
+    fn new() -> Self {
+        Load {
+            since: Instant::now(),
+            busy: Duration::ZERO,
+            level: 0.0,
+        }
+    }
+    /// Counts `busy` computing time and, every fifth of a second, averages the busy share of
+    /// the time since into the level.
+    fn add(&mut self, busy: Duration) {
+        self.busy += busy;
+        let window = self.since.elapsed();
+        if window >= Duration::from_millis(200) {
+            let share = (self.busy.as_secs_f64() / window.as_secs_f64()).min(1.0);
+            self.level = 0.5 * self.level + 0.5 * share;
+            self.since = Instant::now();
+            self.busy = Duration::ZERO;
+        }
+    }
+}
+/// Drafts to propose when the client asked for `wanted`. Checking a draft costs every stage a
+/// position. That pays while a pass is mostly network and fixed cost, and loses once the
+/// device is busy, where a position spent on another request's token is never wasted.
+/// `SANGAMA_MTP_LOAD=0` always drafts what the client asked for.
+fn drafts_under_load(wanted: usize, level: f64) -> usize {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var("SANGAMA_MTP_LOAD").map_or(true, |v| v != "0")) {
+        return wanted;
+    }
+    if level > 0.85 {
+        0
+    } else if level > 0.65 {
+        wanted.min(2)
+    } else {
+        wanted
+    }
 }
 impl Resident {
     /// Frees the slots of sessions idle past their expiry; returns their ids.
@@ -322,6 +367,7 @@ pub async fn serve(
         resident: Arc::new(Mutex::new(Resident {
             model,
             sessions: HashMap::new(),
+            load: Load::new(),
         })),
         queue: Arc::default(),
         active: Arc::default(),
@@ -747,10 +793,21 @@ impl Worker {
                 let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
                 let mut seen = std::collections::HashSet::new();
                 let (mut jobs, mut rest) = (Vec::new(), Vec::new());
+                // A prompt is many positions and would hold up every token that shares its
+                // turn, so a turn takes one prompt frame at most.
+                let mut prompt = false;
                 for job in queue.drain(..) {
-                    if jobs.len() < limit && seen.insert(job.frame.header.session.clone()) {
+                    let long = job.frame.header.seq_len > 1 + MAX_DRAFTS;
+                    if jobs.len() < limit
+                        && !(long && prompt)
+                        && !seen.contains(&job.frame.header.session)
+                    {
+                        seen.insert(job.frame.header.session.clone());
+                        prompt |= long;
                         jobs.push(job);
                     } else {
+                        // A session's later frames wait for its earlier ones.
+                        seen.insert(job.frame.header.session.clone());
                         rest.push(job);
                     }
                 }
@@ -768,7 +825,9 @@ impl Worker {
                 .into_iter()
                 .map(|j| ((j.frame, j.received_ms), j.reply))
                 .unzip();
+            let started = Instant::now();
             let results = compute_batch(self, &mut resident, frames);
+            resident.load.add(started.elapsed());
             for ((result, reply), session) in results.into_iter().zip(replies).zip(sessions) {
                 if result.is_err() {
                     // A failed step leaves this stage's cache in an unknown state.
@@ -928,6 +987,7 @@ fn compute_batch(
         match resident.model.forward_many(&items, &tokens, &values) {
             Ok(many) => {
                 let mut row = 0;
+                let mut computed: Vec<(usize, usize, Output)> = vec![];
                 for (&k, item) in group.iter().zip(&items) {
                     let n = item.1;
                     let h = &frames[ready[k].0].0.header;
@@ -945,14 +1005,29 @@ fn compute_batch(
                             })
                         }
                     };
-                    // The MTP head reads this call's hidden states, so it runs before the next.
-                    outputs[k] = Some(draft_after(resident, last, h, item.0, row, &output).map(
-                        |proposed| {
-                            drafts[k] = proposed;
-                            output
-                        },
-                    ));
+                    computed.push((k, row, output));
                     row += n;
+                }
+                // The MTP head reads this call's hidden states, so it runs before the next.
+                let headers: Vec<(&Header, usize, usize, &Output)> = computed
+                    .iter()
+                    .map(|(k, row, output)| {
+                        (&frames[ready[*k].0].0.header, ready[*k].1, *row, output)
+                    })
+                    .collect();
+                match draft_after(resident, last, &headers) {
+                    Ok(mut proposed) => {
+                        for (n, (k, _, output)) in computed.into_iter().enumerate() {
+                            drafts[k] = std::mem::take(&mut proposed[n]);
+                            outputs[k] = Some(Ok(output));
+                        }
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        for &k in &group {
+                            outputs[k] = Some(Err(anyhow::anyhow!("{message}")));
+                        }
+                    }
                 }
             }
             Err(error) => {
@@ -981,7 +1056,7 @@ fn compute_batch(
                 .map(Output::Values)
         };
         outputs[k] = Some(computed.and_then(|output| {
-            drafts[k] = draft_after(resident, last, h, *slot, 0, &output)?;
+            drafts[k] = draft_after(resident, last, &[(h, *slot, 0, &output)])?.remove(0);
             Ok(output)
         }));
     }
@@ -996,6 +1071,11 @@ fn compute_batch(
         ));
     }
     let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+    let batch_frames = ready.len();
+    let batch_positions: usize = ready
+        .iter()
+        .map(|(i, _, _)| frames[*i].0.header.seq_len)
+        .sum();
     let mut frames: Vec<Option<(Frame, f64)>> = frames.into_iter().map(Some).collect();
     for (k, (index, _, draft)) in ready.into_iter().enumerate() {
         let (frame, received_ms) = frames[index].take().expect("each frame is finished once");
@@ -1015,6 +1095,8 @@ fn compute_batch(
                     forward_ms: elapsed,
                     started_ms,
                     received_ms,
+                    batch_frames,
+                    batch_positions,
                 },
             )
         }));
@@ -1025,43 +1107,61 @@ fn compute_batch(
         .collect()
 }
 
-/// The final stage's MTP head sees every kept position of a frame, then drafts after the token
-/// the model chose: the drafts it verified up to the first rejection, then its own token. It
-/// reads the hidden states of the device call the frame was in, where the frame began at `row`.
+/// The final stage's MTP head sees every kept position of each frame, then drafts after the
+/// token the model chose: the drafts it verified up to the first rejection, then its own
+/// token. It reads the hidden states of the device call the frames shared; each entry is a
+/// frame's header, slot, first row in that call and output, in increasing slot order.
 fn draft_after(
     resident: &mut Resident,
     last: bool,
-    h: &Header,
-    slot: usize,
-    row: usize,
-    output: &Output,
-) -> Result<Vec<u32>> {
-    if !last || h.inputs.is_empty() || !resident.model.has_mtp() {
-        return Ok(vec![]);
+    frames: &[(&Header, usize, usize, &Output)],
+) -> Result<Vec<Vec<u32>>> {
+    let mut proposed: Vec<Vec<u32>> = frames.iter().map(|_| vec![]).collect();
+    if !last || !resident.model.has_mtp() {
+        return Ok(proposed);
     }
-    let (keep, next) = match output {
-        Output::Tokens(ids) if h.speculative => {
-            let accepted = h.inputs[1..]
-                .iter()
-                .zip(ids)
-                .take_while(|(draft, model)| draft == model)
-                .count();
-            (accepted + 1, ids[accepted])
+    let level = resident.load.level;
+    let (mut steps, mut owners) = (vec![], vec![]);
+    for (n, (h, slot, row, output)) in frames.iter().enumerate() {
+        if h.inputs.is_empty() {
+            continue;
         }
-        Output::Tokens(ids) => (h.seq_len, ids[0]),
-        Output::Values(values) => (h.seq_len, argmax(values) as u32),
-    };
-    let wanted = if h.sample { h.mtp_drafts } else { 0 };
-    let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
-    resident.model.mtp_step(
-        slot,
-        row,
-        &h.inputs[..keep],
-        h.position,
-        next,
-        wanted.min(room),
-        mtp_p_min(),
-    )
+        let (keep, next) = match output {
+            Output::Tokens(ids) if h.speculative => {
+                let accepted = h.inputs[1..]
+                    .iter()
+                    .zip(ids)
+                    .take_while(|(draft, model)| draft == model)
+                    .count();
+                (accepted + 1, ids[accepted])
+            }
+            Output::Tokens(ids) => (h.seq_len, ids[0]),
+            Output::Values(values) => (h.seq_len, argmax(values) as u32),
+        };
+        let wanted = if h.sample {
+            drafts_under_load(h.mtp_drafts, level)
+        } else {
+            0
+        };
+        let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
+        steps.push(super::engine::MtpStep {
+            slot: *slot,
+            row: *row,
+            inputs: &h.inputs[..keep],
+            position: h.position,
+            next,
+            n_draft: wanted.min(room),
+        });
+        owners.push(n);
+    }
+    if steps.is_empty() {
+        return Ok(proposed);
+    }
+    let drafted = resident.model.mtp_step_many(&steps, mtp_p_min())?;
+    for (n, drafts) in owners.into_iter().zip(drafted) {
+        proposed[n] = drafts;
+    }
+    Ok(proposed)
 }
 
 /// Records the session's progress and turns a computed frame into the one to pass on.

@@ -136,6 +136,8 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
                         forward_ms: 0.1,
                         started_ms: 0.0,
                         received_ms: 0.0,
+                        batch_frames: 1,
+                        batch_positions: 1,
                     }];
                     frame.values = vec![0.; 151936];
                     frame.values[id] = 1.;
