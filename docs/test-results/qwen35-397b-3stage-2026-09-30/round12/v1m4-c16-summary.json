@@ -1,0 +1,1 @@
+{"prefix": "v1m4", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 23.5, "tokens": 4096, "aggregate_tps": 174.15, "steady_tps": 378.9, "stream_tps_p50": 16.81, "stream_tps_p5": 15.74, "ttft_s_p50": 0.97, "ttft_s_p95": 1.6, "identical_to_solo": "8/16", "mtp": 4, "tokens_per_pass": 3.26, "drafts_accepted": "2839/4929"}

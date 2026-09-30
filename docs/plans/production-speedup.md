@@ -31,20 +31,20 @@ Round 10 tested these streams on three 96 GB cards in one datacenter. Results ar
 | D. Throughput ceiling | Instrumentation done and circuit cap lifted. It located a different ceiling on the close fleet: the last stage's GPU, one frame at a time. The twenty-stage ceiling is still open. |
 | E. Per-hop overhead | Cheap clean-up only. Measured 1.3 ms per hop on the close fleet. |
 | F. Fewer, larger stages | Done by layout: 3 stages ran one request at 48 tok/s, 107 with drafts. |
-| G. Batching | Built (round 11): plain throughput 119 to 403 tok/s at 48 requests, 449 at 64. Drafts with batching were wrong on the fleet; a local fix awaits a fleet run. |
+| G. Batching | Built (round 11): plain throughput 119 to 403 tok/s at 48 requests, 449 at 64. Drafts with batching were wrong on the fleet at first; the fix was validated in round 12, where drafts under load ran slower than plain (174 against 233 tok/s at 16 requests). |
 
 ## Work streams
 
 Each stream has one owner-sized goal, a way to measure it, and no dependency on the others unless stated.
 
-### A. Cheap rollback of drafts (done locally, not yet run on the fleet)
+### A. Cheap rollback of drafts (done; measured on the fleet in round 10)
 
 - **Finding:** llama.cpp keeps the last `n_rs_seq` recurrent states of a sequence on the device and rewinds with one `llama_memory_seq_rm`. No state is copied and nothing is decoded again. Its own server does MTP rollback this way. Attention KV is trimmed by the same call.
 - **Built:** `qwen-worker --rollback N` (commit `20c66e6`). The saved-state path remains for engines that cannot rewind.
 - **Local result:** Qwen3.5-0.8B across two workers, 4 drafts: a drafted pass fell from 126 ms to 61 ms, output identical to plain decoding.
 - **Cost:** one more recurrent state per slot per rewindable position, about 12 MB each on a 397B stage. With 4 drafts that is ~60 MB per session, so a 16 GB stage holds about 40 sessions rather than 96.
 - **Fleet gate:** a drafted pass within 10 % of a plain pass. If it holds, 2.7–5.3 tokens per pass becomes 2.5–5× for one request.
-- **Open:** llama.cpp issue #23322 reports acceptance collapsing after a checkpoint desync on a hybrid model. Watch the acceptance rate, which was 56–98 % in round 8.
+- **Open:** llama.cpp issue #23322 reports acceptance collapsing after a checkpoint desync on a hybrid model. Watch the acceptance rate, which was 35–98 % across round 8's runs.
 
 ### B. Direct connections, relay as fallback
 
