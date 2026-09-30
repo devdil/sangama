@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-397B in three large stages: 48 to 107 tokens per second - Sangama</title>
+<meta name="description" content="The same 397B model on three 96 GB GPUs in one datacenter: 48 tokens per second for one request, up to 107 with the model's draft layer, and where the limits now are.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>Qwen3.5-397B in three large stages</h1>
+<p><i>30 September 2026</i></p>
+
+<p>Our earlier tests split Qwen3.5-397B across twenty GPUs with 16 GB each. A token spent almost all its time on the network, crossing 21 hops. This test asks the opposite question: how fast is the same software when the hops are few and close?</p>
+
+<p>We ran the model as three stages of 20 layers on three 96 GB GPUs in one datacenter.</p>
+
+<p><b>Result:</b></p>
+<ul>
+<li><b>One request:</b> 48 to 50 tokens per second, and up to <b>107</b> when the model guesses ahead. The twenty-machine fleets ran one request at 1.25 to 5.5.</li>
+<li><b>Many requests:</b> about 120 tokens per second in total, and up to <b>183</b> with guesses.</li>
+<li><b>First token:</b> 115 to 210 milliseconds.</li>
+</ul>
+
+<p class="small">This is not the home-computer case. These are datacenter cards that rent for about $1.90 an hour each. It shows what the design can do when distance is removed, and where the next limits are.</p>
+
+<hr>
+
+<h2>Setup</h2>
+<table>
+<tr><th>Model</th><td>Qwen3.5-397B-A17B, 4-bit (Q4_K_M), 3 stages of 20 layers, about 82 GB each</td></tr>
+<tr><th>Workers</th><td>3 &times; RTX PRO 6000 Blackwell with 96 GB, in one datacenter</td></tr>
+<tr><th>Relay and client</th><td>One more machine in the same datacenter</td></tr>
+<tr><th>Network</th><td>First through the relay, then with direct connections between all machines</td></tr>
+<tr><th>Cost</th><td>About $6.50 an hour for everything, half of the twenty-machine fleet</td></tr>
+</table>
+
+<h2>One request</h2>
+
+<p>Tokens per second, 128 tokens per run. "Guesses" are tokens the model's own draft layer proposes; the next trip through the machines checks them all at once.</p>
+
+<div class="wide">
+<table>
+<tr><th>Guesses per step</th><th>Code</th><th>Explanation</th><th>Factual answer</th></tr>
+<tr><td>none</td><td>48-50</td><td>48-50</td><td>48-50</td></tr>
+<tr><td>2</td><td>86</td><td>74</td><td>78</td></tr>
+<tr><td>4</td><td>97-105</td><td>76-79</td><td>75-77</td></tr>
+<tr><td>6</td><td><b>105-107</b></td><td>64-66</td><td>71-73</td></tr>
+</table>
+</div>
+
+<ul>
+<li><b>Guesses are usually right at first.</b> With two per step, 83 of 86 were accepted on the code prompt.</li>
+<li><b>More guesses are not always better.</b> For plain prose, fewer than half of six guesses were accepted, and six ran slower than four.</li>
+</ul>
+
+<h2>Where the time goes now</h2>
+
+<table>
+<tr><th>Per trip through the three machines</th><th>Plain</th><th>With 6 guesses</th></tr>
+<tr><td>GPU computing</td><td>14.3 ms</td><td>31.0 ms</td></tr>
+<tr><td>Waiting inside the workers, including undoing wrong guesses</td><td>0.3 ms</td><td>0.4 ms</td></tr>
+<tr><td>Network and handling, four hops</td><td>6.2 ms</td><td>5.6 ms</td></tr>
+<tr><td>Total</td><td>20.7 ms</td><td>36.1 ms</td></tr>
+</table>
+
+<p>On the twenty-machine fleets, computing was 1 to 3% of each token's time. Here it is most of it. Checking guesses costs more only because the model does more work per trip.</p>
+
+<h2>Undoing wrong guesses is now free</h2>
+
+<p>In our <a href="/results/qwen35-397b-concurrency-mtp.html">previous test</a>, every machine saved a full copy of its state before each trip that checked guesses, about 36 ms per machine, whether or not any guess was wrong. That is why 5.3 tokens per trip gave only 2.2&times; the speed.</p>
+
+<p>The model runtime can instead keep the last few states on the GPU and step back to one of them. We now use that. Waiting inside the workers, with the undo included, is 0.2 to 0.4 ms per trip.</p>
+
+<h2>Many requests at once</h2>
+
+<div class="wide">
+<table>
+<tr><th>Requests at once</th><th>Total tokens per second</th><th>Each request</th><th>Same tokens as alone</th></tr>
+<tr><td>1</td><td>51.5</td><td>51.5</td><td>1 of 1</td></tr>
+<tr><td>4</td><td>118.5</td><td>29.6</td><td>4 of 4</td></tr>
+<tr><td>16</td><td>118.8</td><td>7.4</td><td>16 of 16</td></tr>
+<tr><td>48</td><td>118.9</td><td>2.5</td><td>48 of 48</td></tr>
+</table>
+</div>
+
+<p>With 4 guesses per step the total rose to 156 (4 requests), 177 (8) and <b>183</b> (16).</p>
+
+<p><b>The limit is one GPU.</b> We added timing to every stage, and it shows the queue directly: with 48 requests, a frame waited 344 ms at the last machine and almost nothing at the other two. That machine takes 8.1 ms per frame and handles one at a time, which is about 120 per second. The fix is to let it work on several requests in one step.</p>
+
+<p class="small">This is a different limit from the one on the twenty-machine fleet, where the total stopped near 90 with every machine idle. That one is still unexplained.</p>
+
+<h2>Direct connections</h2>
+
+<p>Machines with open ports can now connect to each other directly and keep the relay as a fallback. All machines here did, and the network share of each trip fell from 6.2 to 5.1 ms. The relay was in the same room, so this test cannot show what direct connections save across a distance. That needs a spread-out fleet.</p>
+
+<h2>What the testing caught</h2>
+<ul>
+<li><b>Hole punching ignored the addresses we configured.</b> The library only offers addresses that other machines have observed. Machines with a known public address now dial each other themselves.</li>
+<li><b>Downloads, one file at a time, were the slowest part of setup.</b> Fetching six files at once brought each 82 GB stage down in minutes.</li>
+</ul>
+
+<h2>Limits of this test</h2>
+<ul>
+<li>One fleet, single runs, three prompts.</li>
+<li>As before, output with guesses can differ from plain output at close word choices, because processing several positions together changes the arithmetic slightly. Requests without guesses matched their solo runs exactly.</li>
+</ul>
+
+<h2>Next</h2>
+<ul>
+<li><b>Several requests per step on the last machine</b>, since it is the measured limit.</li>
+<li><b>Stop guessing when the draft layer is unsure</b>, so prose does not pay for guesses that are usually wrong.</li>
+<li><b>A middle layout</b>, six to ten machines with 24 to 48 GB and real distance between them, to test direct connections and placement where they matter.</li>
+</ul>
+
+<p>Full report and raw data: <a href="https://github.com/devdil/sangama/blob/main/docs/test-results/qwen35-397b-3stage-2026-09-30.md">docs/test-results</a>.</p>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:hello@sangama.co">hello@sangama.co</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>
