@@ -1,0 +1,1 @@
+{"prefix": "r7c", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 52.4, "tokens": 1024, "aggregate_tps": 19.53, "stream_tps_p50": 1.88, "stream_tps_p5": 1.56, "ttft_s_p50": 16.06, "ttft_s_p95": 16.14, "identical_to_solo": "16/16"}

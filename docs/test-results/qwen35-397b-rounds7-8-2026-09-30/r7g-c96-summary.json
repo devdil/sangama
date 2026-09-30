@@ -1,0 +1,1 @@
+{"prefix": "r7g", "concurrency": 96, "ok": 51, "failed": 45, "wall_s": 160.5, "tokens": 6528, "aggregate_tps": 40.68, "steady_tps": 90.9, "stream_tps_p50": 1.79, "stream_tps_p5": 1.68, "ttft_s_p50": 4.67, "ttft_s_p95": 6.07, "identical_to_solo": "51/51"}

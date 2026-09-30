@@ -1,0 +1,1 @@
+{"prefix": "solo", "concurrency": 4, "ok": 4, "failed": 0, "wall_s": 230.0, "tokens": 256, "aggregate_tps": 1.11, "stream_tps_p50": 1.25, "stream_tps_p5": 1.23, "ttft_s_p50": 4.66, "ttft_s_p95": 6.93, "identical_to_solo": "n/a"}

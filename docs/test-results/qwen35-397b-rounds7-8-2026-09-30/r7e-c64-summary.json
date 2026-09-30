@@ -1,0 +1,1 @@
+{"prefix": "r7e", "concurrency": 64, "ok": 45, "failed": 19, "wall_s": 151.5, "tokens": 5760, "aggregate_tps": 38.02, "steady_tps": 52.3, "stream_tps_p50": 1.17, "stream_tps_p5": 1.07, "ttft_s_p50": 9.39, "ttft_s_p95": 13.6, "identical_to_solo": "0/45"}

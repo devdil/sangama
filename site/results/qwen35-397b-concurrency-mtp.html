@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-397B: many requests at once, and drafted tokens - Sangama</title>
+<meta name="description" content="A 397B model on 20 rented GPUs through a relay: 96 requests at once, up to 90 tokens per second in total, and up to 2.2x faster single requests with the model's own draft layer.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>Qwen3.5-397B: many requests at once, and drafted tokens</h1>
+<p><i>30 September 2026</i></p>
+
+<p>The <a href="/results/qwen35-397b.html">previous test</a> ran Qwen3.5-397B across 20 rented GPUs with 16 GB each, every connection through a relay. It served one request at a time, and the GPUs sat almost idle. This test asks two questions about the same pipeline:</p>
+<ol>
+<li>How much can it serve when many people use it at once?</li>
+<li>How much faster is one request when the model guesses several tokens ahead?</li>
+</ol>
+
+<p><b>Result:</b></p>
+<ul>
+<li><b>Many requests at once:</b> 32 requests together gave 35.6 tokens per second in total, against 1.25 for one request alone. The best run reached <b>90.9 tokens per second</b> with 51 requests. 96 requests ran together and every one produced the same tokens as when run alone.</li>
+<li><b>Drafted tokens:</b> the model's own draft layer produced up to 5.3 tokens per trip through the 20 machines, and made a single request up to <b>2.2&times; faster</b>.</li>
+</ul>
+
+<p class="small">This fleet is slower per request than the previous one (1.25 against 5.4 tokens per second), because its machines are spread over three US states. The previous fleet's provider ended its listings that morning. The comparisons below are within this fleet.</p>
+
+<hr>
+
+<h2>Setup</h2>
+<table>
+<tr><th>Model</th><td>Qwen3.5-397B-A17B, 4-bit (Q4_K_M), 20 stages of 3 layers each</td></tr>
+<tr><th>Workers</th><td>20 rented GPUs (RTX 4090, 5090, 3090 Ti, 5080, L4), each capped at 16 GB; the last stage gets 30 GB when it holds the draft layer</td></tr>
+<tr><th>Network</th><td>Every hop through one relay in Nevada; workers in Nevada, California and Utah, 1 to 56 ms from it</td></tr>
+<tr><th>One request</th><td>About 800 ms per token, 23 ms of it GPU computing</td></tr>
+</table>
+
+<h2>Many requests at once</h2>
+
+<p>A token spends about 1 ms on each GPU and the rest of its 800 ms on the network, so each machine can work on other requests in the meantime. Each worker now keeps up to 96 separate sessions in memory.</p>
+
+<div class="wide">
+<table>
+<tr><th>Requests at once</th><th>Total tokens per second</th><th>Each request, tokens per second</th><th>Same tokens as alone</th></tr>
+<tr><td>1</td><td>1.3</td><td>1.25</td><td>1 of 1</td></tr>
+<tr><td>4</td><td>6.2</td><td>1.55</td><td>4 of 4</td></tr>
+<tr><td>16</td><td>30</td><td>1.88</td><td>16 of 16</td></tr>
+<tr><td>32</td><td>60</td><td>1.87</td><td>32 of 32</td></tr>
+<tr><td>51</td><td><b>90.9</b></td><td>1.79</td><td>51 of 51</td></tr>
+<tr><td>64</td><td>56.4</td><td>0.88</td><td>64 of 64</td></tr>
+<tr><td>96</td><td>67.6</td><td>0.70</td><td>96 of 96</td></tr>
+</table>
+</div>
+
+<p class="small">Total is the sum of each request's decode speed once all are running. Counting prompts and start-up as well, 32 requests gave 35.6 and 96 gave 56.6 tokens per second. The 51-request row is a run of 96 in which 45 clients failed to start; the other 51 ran together.</p>
+
+<ul>
+<li><b>Up to about 50 requests, each keeps its full speed</b>, so the total grows with the number of requests.</li>
+<li><b>Past about 50, each request slows</b> and the total stops rising. Processors were 10-20% busy and GPUs under 7%, so the limit is not computing. We have not found it yet.</li>
+<li><b>Memory:</b> 96 sessions fit in 14.0-15.3 GB per worker, including 12.6 GB of model weights.</li>
+</ul>
+
+<h2>Drafted tokens</h2>
+
+<p>Qwen3.5 has a small extra layer trained to predict the token after next. The last machine in the pipeline uses it to guess a few tokens ahead and sends the guesses back with each token. The next trip through the 20 machines checks all the guesses at once, keeps the ones the model agrees with, and discards the rest.</p>
+
+<div class="wide">
+<table>
+<tr><th>Prompt</th><th>Guesses per step</th><th>Tokens per trip</th><th>Guesses accepted</th><th>Tokens per second</th><th>Speed-up</th></tr>
+<tr><td>Code</td><td>none</td><td>1.0</td><td>-</td><td>1.25</td><td>-</td></tr>
+<tr><td></td><td>2</td><td>2.8</td><td>41 of 42</td><td>1.82</td><td>1.5&times;</td></tr>
+<tr><td></td><td>4</td><td>4.3</td><td>49 of 55</td><td>2.29</td><td>1.8&times;</td></tr>
+<tr><td></td><td>6</td><td>5.3</td><td>52 of 66</td><td><b>2.69</b></td><td><b>2.2&times;</b></td></tr>
+<tr><td>Explanation</td><td>none</td><td>1.0</td><td>-</td><td>1.24</td><td>-</td></tr>
+<tr><td></td><td>2</td><td>2.2</td><td>35 of 55</td><td>1.43</td><td>1.2&times;</td></tr>
+<tr><td></td><td>6</td><td>3.2</td><td>44 of 105</td><td>1.60</td><td>1.3&times;</td></tr>
+<tr><td>Factual</td><td>none</td><td>1.0</td><td>-</td><td>1.22</td><td>-</td></tr>
+<tr><td></td><td>2</td><td>2.6</td><td>39 of 47</td><td>1.65</td><td>1.4&times;</td></tr>
+<tr><td></td><td>6</td><td>2.9</td><td>42 of 121</td><td>1.44</td><td>1.2&times;</td></tr>
+</table>
+</div>
+
+<ul>
+<li><b>The guesses are good.</b> The first one or two are almost always right. Later guesses in a chain are right less often.</li>
+<li><b>Checking guesses is not free yet.</b> A trip that checks guesses took 1.5 to 2 seconds, against 0.8 for a plain trip. Every machine saves its state first and, when a guess is rejected, restores it and redoes the accepted tokens. That is why 5.3 tokens per trip gave 2.2&times; and not 5.3&times;. Making this cheap is the next step.</li>
+<li><b>A 4-bit draft layer is enough.</b> An 8-bit copy was accepted no more often.</li>
+<li><b>The published model file leaves the draft layer out.</b> We converted it from the original release (5.7 GB). The last machine needs about 19.5 GB with it.</li>
+</ul>
+
+<h2>A correction: the output depends on batching</h2>
+
+<p>Runs with guesses were fluent, but often not token-for-token identical to plain runs. They differ at close word choices, for example "iteratively." against "using an iterative approach.".</p>
+
+<p>Drafting does not cause this. Plain decoding gave different tokens at the same place when we only changed how many prompt tokens were sent at a time (8 instead of 64). Repeating a run with the same settings always gave the same tokens. Processing several positions together changes the arithmetic very slightly, and in this model that can flip a near-tie.</p>
+
+<p>Our earlier page said every configuration produced exactly the same tokens. That was true for the prompts and settings we tested then, but it is not true in general for this model.</p>
+
+<h2>What the testing caught</h2>
+<ul>
+<li><b>Rented machines have end dates.</b> The previous relay and ten workers stopped when their provider's listings ended, and could not be restarted. We rebuilt on listings with weeks left.</li>
+<li><b>Listed locations can be wrong.</b> Two machines listed in California added 220 ms and over 400 ms per hop. Connecting to the relay looked instant from one of them, because a local proxy answered; timing a real reply showed the delay.</li>
+<li><b>Limits sized for one request.</b> Our network layer allowed 4 requests in flight per link, then 16 calls per machine, then 64 sessions. Each was found by adding requests until something refused.</li>
+<li><b>The model runtime kept memory for all 60 layers</b> in every session, about 306 MB each, although a worker runs only 3. It now keeps about 12-20 MB per session.</li>
+</ul>
+
+<h2>Next</h2>
+<ul>
+<li><b>Cheaper checking of guesses</b>, so more of the 3-5 tokens per trip becomes speed.</li>
+<li><b>Find the limit near 50 requests.</b></li>
+<li><b>Place machines by measured delay and listing end date</b>, automatically.</li>
+</ul>
+
+<p>Full report and raw data: <a href="https://github.com/devdil/sangama/blob/main/docs/test-results/qwen35-397b-rounds7-8-2026-09-30.md">docs/test-results</a>.</p>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:hello@sangama.co">hello@sangama.co</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>

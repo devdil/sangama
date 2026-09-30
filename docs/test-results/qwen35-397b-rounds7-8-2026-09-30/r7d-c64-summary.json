@@ -1,0 +1,1 @@
+{"prefix": "r7d", "concurrency": 64, "ok": 25, "failed": 39, "wall_s": 59.8, "tokens": 1600, "aggregate_tps": 26.74, "stream_tps_p50": 1.87, "stream_tps_p5": 1.4, "ttft_s_p50": 20.84, "ttft_s_p95": 20.95, "identical_to_solo": "25/25"}

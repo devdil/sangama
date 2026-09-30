@@ -65,6 +65,8 @@ th { background: #eee; }
 
 <p class="small">Single runs, greedy decoding. Every configuration produced exactly the same tokens as the first full-precision run.</p>
 
+<p class="small"><b>Correction, 30 September:</b> that held for these prompts and settings, but not in general. A <a href="/results/qwen35-397b-concurrency-mtp.html">later test</a> found that how tokens are batched can change this model's output at close word choices.</p>
+
 <h2>Where the time goes</h2>
 
 <p>The GPUs spend <b>21 milliseconds</b> on each token, all 20 together. The model activates only 17 billion of its 397 billion parameters per token, so the computing is cheap. Almost everything else is the network: a token must pass through 20 computers in order, and each hop crosses the relay.</p>
@@ -124,7 +126,7 @@ th { background: #eee; }
 
 <h2>Next</h2>
 <ul>
-<li><b>Better guesses for speculative decoding.</b> Publish the model's own multi-token-prediction layer with the slices and use it to guess ahead (<a href="#spec">see above</a>).</li>
+<li><b>Better guesses for speculative decoding.</b> Done in the <a href="/results/qwen35-397b-concurrency-mtp.html">next test</a>: the model's own multi-token-prediction layer gives up to 5.3 tokens per trip.</li>
 <li><b>Automatic placement.</b> Have the scheduler pick workers close to the relay, or to each other, as we did by hand in round 5.</li>
 <li><b>Direct connections on home networks.</b> Our rented machines could not accept incoming connections, so hole punching could not be tested here.</li>
 </ul>
