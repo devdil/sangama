@@ -97,6 +97,19 @@ fn mtp_p_min() -> f32 {
     })
 }
 
+/// Most frames one batch takes: the live sessions shared evenly between the route's stages,
+/// so each stage has a batch in hand. `SANGAMA_BATCH_MAX` overrides it for measurements.
+fn batch_limit(sessions: usize, stages: usize) -> usize {
+    static FIXED: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    let fixed = *FIXED.get_or_init(|| {
+        std::env::var("SANGAMA_BATCH_MAX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|v| *v >= 1)
+    });
+    fixed.unwrap_or_else(|| sessions.max(1).div_ceil(stages.max(1)))
+}
+
 /// Frames of different sessions share a device call unless `SANGAMA_BATCH=0`, which runs them
 /// one at a time, e.g. to compare the two.
 fn batching() -> bool {
@@ -725,18 +738,27 @@ impl Worker {
         let mut resident = self.engine();
         let mut ended = resident.expire();
         loop {
-            let jobs = std::mem::take(&mut *self.queue.lock().unwrap_or_else(|e| e.into_inner()));
+            // Take one frame per session, up to a share of the live sessions. If every waiting
+            // frame ran as one batch, the sessions would move through the route as a single
+            // wave and only one stage would work at a time. Smaller batches, run back to
+            // back, keep every stage busy.
+            let limit = batch_limit(resident.sessions.len(), self.manifest.shards.len());
+            let jobs = {
+                let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+                let mut seen = std::collections::HashSet::new();
+                let (mut jobs, mut rest) = (Vec::new(), Vec::new());
+                for job in queue.drain(..) {
+                    if jobs.len() < limit && seen.insert(job.frame.header.session.clone()) {
+                        jobs.push(job);
+                    } else {
+                        rest.push(job);
+                    }
+                }
+                *queue = rest;
+                jobs
+            };
             if jobs.is_empty() {
                 break;
-            }
-            // A session's frames run in order: a second frame waits for the next round.
-            let mut seen = std::collections::HashSet::new();
-            let (jobs, later): (Vec<Job>, Vec<Job>) = jobs
-                .into_iter()
-                .partition(|job| seen.insert(job.frame.header.session.clone()));
-            if !later.is_empty() {
-                let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-                queue.splice(0..0, later);
             }
             let sessions: Vec<String> = jobs
                 .iter()
