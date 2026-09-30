@@ -78,6 +78,25 @@ impl Engine {
         }
     }
 
+    /// Positions `rollback` can rewind without a saved state; 0 means use `save_state`.
+    pub fn rollback_depth(&self) -> usize {
+        match self {
+            Engine::Candle(_) => 0,
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => stage.rollback_depth(),
+        }
+    }
+
+    /// Rewinds a slot to `position`, discarding what the last batch decoded from there on.
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn rollback(&mut self, slot: usize, position: usize) -> Result<()> {
+        match self {
+            Engine::Candle(_) => anyhow::bail!("the candle engine cannot rewind a session"),
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => Ok(stage.rollback(slot, position)?),
+        }
+    }
+
     /// Whether this engine can draft tokens with the model's MTP head.
     pub fn has_mtp(&self) -> bool {
         match self {

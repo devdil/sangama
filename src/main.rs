@@ -190,6 +190,10 @@ enum Command {
         /// MTP-only GGUF in the model directory: the final stage drafts tokens with it (llamacpp).
         #[arg(long)]
         mtp_gguf: Option<String>,
+        /// Drafted tokens a session can be rewound without saving state (llamacpp, models with
+        /// recurrent layers such as Qwen3.5). Set to the most drafts clients verify per step.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=16))]
+        rollback: u8,
         #[arg(long, default_value = "127.0.0.1:7901")]
         listen: SocketAddr,
         /// Explicit permitted downstream loopback/tunnel endpoints.
@@ -467,6 +471,7 @@ async fn main() -> Result<()> {
             memory_budget_mib,
             slots,
             mtp_gguf,
+            rollback,
             listen,
             allow_next,
         } => {
@@ -480,6 +485,7 @@ async fn main() -> Result<()> {
                     memory_budget_mib,
                     slots: slots.into(),
                     mtp_gguf: mtp_gguf.as_deref(),
+                    rollback: rollback.into(),
                 },
                 listen,
                 token(cli.token)?,

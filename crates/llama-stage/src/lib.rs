@@ -35,10 +35,13 @@ unsafe extern "C" {
         n_gpu_layers: c_int,
         n_ctx: c_int,
         n_seq: c_int,
+        n_rollback: c_int,
         n_threads: c_int,
         err: *mut c_char,
         err_len: usize,
     ) -> *mut RawStage;
+    fn sg_stage_n_rollback(stage: *const RawStage) -> c_int;
+    fn sg_stage_rollback(stage: *mut RawStage, seq: c_int, pos: c_int) -> c_int;
     fn sg_stage_n_layer(stage: *const RawStage) -> c_int;
     fn sg_stage_n_embd(stage: *const RawStage) -> c_int;
     fn sg_stage_n_vocab(stage: *const RawStage) -> c_int;
@@ -144,6 +147,9 @@ pub struct Options {
     pub context: usize,
     /// Independent sequences (sessions) the stage can hold at once, each with its own cache.
     pub slots: usize,
+    /// Positions a sequence can be rewound without a saved state, e.g. rejected drafts. Costs
+    /// one more recurrent state per slot for each position; models without support ignore it.
+    pub rollback: usize,
     pub threads: usize,
 }
 
@@ -182,6 +188,7 @@ impl Stage {
                 if options.gpu { 999 } else { 0 },
                 int(options.context)?,
                 int(options.slots)?,
+                int(options.rollback)?,
                 int(options.threads.max(1))?,
                 err.as_mut_ptr(),
                 err.len(),
@@ -222,6 +229,25 @@ impl Stage {
     }
     pub fn slots(&self) -> usize {
         self.slots
+    }
+    /// Positions `rollback` can rewind; 0 if this model needs `save_state`/`load_state`.
+    pub fn rollback_depth(&self) -> usize {
+        // SAFETY: raw is a live stage.
+        unsafe { sg_stage_n_rollback(self.raw) as usize }
+    }
+
+    /// Rewinds a slot to `position`, discarding the positions from there on that the last
+    /// `forward` or `greedy` call decoded. No state is copied and nothing is decoded again.
+    pub fn rollback(&mut self, slot: usize, position: usize) -> Result<()> {
+        let seq = self.seq(slot)?;
+        let pos = c_int::try_from(position).map_err(|_| Error("parameter too large".into()))?;
+        // SAFETY: raw is a live stage and seq is in range.
+        if unsafe { sg_stage_rollback(self.raw, seq, pos) } == 0 {
+            return Err(Error(format!(
+                "cannot rewind slot {slot} to position {position} without a saved state"
+            )));
+        }
+        Ok(())
     }
     pub fn is_first(&self) -> bool {
         self.start == 0

@@ -11,6 +11,7 @@ fn options() -> Options {
         gpu: std::env::var_os("SANGAMA_TEST_CPU").is_none(),
         context: 1024,
         slots: 4,
+        rollback: 4,
         threads: 4,
     }
 }
@@ -278,7 +279,11 @@ fn mtp_drafts_keep_greedy_output() {
     drop(stages);
 
     let mut stages = open();
+    // SANGAMA_TEST_SNAPSHOT=1 rolls back with saved states instead of the on-device rewind.
+    let rewind = std::env::var_os("SANGAMA_TEST_SNAPSHOT").is_none();
+    assert!(!rewind || stages.iter().all(|s| s.rollback_depth() >= 4));
     let logits = forward(&mut stages, &prompt, 0);
+    let started = std::time::Instant::now();
     let mut next = argmax(&logits) as u32;
     let mut out = vec![next];
     let mut drafts = stages[1].mtp_step(slot, &prompt, 0, next, 4, 0.0).unwrap();
@@ -288,10 +293,14 @@ fn mtp_drafts_keep_greedy_output() {
         let inputs: Vec<u32> = std::iter::once(next)
             .chain(drafts.iter().copied())
             .collect();
-        let snapshots: Vec<Vec<u8>> = stages
-            .iter_mut()
-            .map(|s| s.save_state(slot).unwrap())
-            .collect();
+        let snapshots: Vec<Vec<u8>> = if rewind {
+            vec![]
+        } else {
+            stages
+                .iter_mut()
+                .map(|s| s.save_state(slot).unwrap())
+                .collect()
+        };
         let hidden = stages[0]
             .forward(slot, &inputs, &[], inputs.len(), position)
             .unwrap();
@@ -312,7 +321,12 @@ fn mtp_drafts_keep_greedy_output() {
         let new_drafts = stages[1]
             .mtp_step(slot, kept, position, next, 4, 0.0)
             .unwrap();
-        if a < drafts.len() {
+        if a < drafts.len() && rewind {
+            // Rewind both stages to just after the kept inputs: no copy, no replay.
+            for stage in stages.iter_mut() {
+                stage.rollback(slot, position + a + 1).unwrap();
+            }
+        } else if a < drafts.len() {
             // Roll both stages back to before the batch and replay the kept inputs.
             for (stage, snapshot) in stages.iter_mut().zip(&snapshots) {
                 stage.load_state(slot, snapshot).unwrap();
@@ -329,8 +343,10 @@ fn mtp_drafts_keep_greedy_output() {
     }
     out.truncate(n);
     eprintln!(
-        "MTP drafts accepted: {accepted} of {drafted} ({:.0}%)",
-        100.0 * accepted as f64 / drafted.max(1) as f64
+        "MTP drafts accepted: {accepted} of {drafted} ({:.0}%), {} rollback, {:.0} ms",
+        100.0 * accepted as f64 / drafted.max(1) as f64,
+        if rewind { "on-device" } else { "snapshot" },
+        started.elapsed().as_secs_f64() * 1000.0
     );
     assert_eq!(out, reference);
 }

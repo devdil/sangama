@@ -108,10 +108,15 @@ struct Session {
 }
 struct Draft {
     position: usize,
+    seq_len: usize,
+    /// The state before the batch and its inputs, kept only when the engine cannot rewind
+    /// this many positions on its own.
+    saved: Option<Saved>,
+}
+struct Saved {
     state: Vec<u8>,
     tokens: Vec<u32>,
     values: Vec<f32>,
-    seq_len: usize,
 }
 struct Resident {
     model: Engine,
@@ -205,6 +210,9 @@ pub struct EngineChoice<'a> {
     pub slots: usize,
     /// MTP-only GGUF in the model directory; the final stage then drafts tokens (llama.cpp).
     pub mtp_gguf: Option<&'a str>,
+    /// Drafted positions a session can be rewound without saving state (llama.cpp, models
+    /// with recurrent layers). Each costs one more recurrent state per slot.
+    pub rollback: usize,
 }
 
 pub async fn serve(
@@ -399,6 +407,7 @@ fn open_llamacpp(
         gpu,
         context: CONTEXT_LIMIT,
         slots: engine.slots,
+        rollback: engine.rollback,
         threads,
     };
     let mut stage = Stage::open(&dir.join(&gguf.file), spec.start, spec.end, &options)?;
@@ -696,29 +705,43 @@ fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Fra
     let slot = session.slot;
     let previous = session.draft.take();
     if session.position != h.position {
-        // The client accepted only part of the last speculative batch: restore the state
-        // from before it and replay the accepted inputs, which this stage kept.
+        // The client accepted only part of the last speculative batch. Rewind to the end of
+        // the accepted inputs; without engine support, restore the state from before the
+        // batch and replay them.
         let d = previous
             .filter(|d| d.position < h.position && h.position < d.position + d.seq_len)
             .context("session mismatch or out-of-order position; reset required")?;
-        let keep = h.position - d.position;
-        let width = d.values.len() / d.seq_len;
-        resident.model.load_state(slot, &d.state)?;
-        resident.model.forward(
-            slot,
-            &d.tokens[..d.tokens.len().min(keep)],
-            &d.values[..(keep * width).min(d.values.len())],
-            keep,
-            d.position,
-        )?;
+        match d.saved {
+            None => resident.model.rollback(slot, h.position)?,
+            Some(saved) => {
+                let keep = h.position - d.position;
+                let width = saved.values.len() / d.seq_len;
+                resident.model.load_state(slot, &saved.state)?;
+                resident.model.forward(
+                    slot,
+                    &saved.tokens[..saved.tokens.len().min(keep)],
+                    &saved.values[..(keep * width).min(saved.values.len())],
+                    keep,
+                    d.position,
+                )?;
+            }
+        }
     }
     let draft = if h.speculative {
+        // Every position after the first may be rejected.
+        let saved = if resident.model.rollback_depth() >= h.seq_len - 1 {
+            None
+        } else {
+            Some(Saved {
+                state: resident.model.save_state(slot)?,
+                tokens: h.tokens.clone(),
+                values: frame.values.clone(),
+            })
+        };
         Some(Draft {
             position: h.position,
-            state: resident.model.save_state(slot)?,
-            tokens: h.tokens.clone(),
-            values: frame.values.clone(),
             seq_len: h.seq_len,
+            saved,
         })
     } else {
         None

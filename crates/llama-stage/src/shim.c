@@ -64,8 +64,10 @@ int sg_gpu_memory(size_t * free, size_t * total, char * name, size_t name_len) {
 }
 
 // n_ctx is per sequence; the context holds n_seq independent sequences (KV and recurrent state).
+// n_rollback is how many positions a sequence can be rewound without a saved state: llama.cpp
+// keeps that many earlier recurrent states on the device (models that support it; else 0).
 sg_stage * sg_stage_open(const char * path, int il_beg, int il_end, int n_gpu_layers, int n_ctx,
-                         int n_seq, int n_threads, char * err, size_t err_len) {
+                         int n_seq, int n_rollback, int n_threads, char * err, size_t err_len) {
     if (il_beg < 0 || il_beg >= il_end) {
         snprintf(err, err_len, "empty or negative layer range [%d, %d)", il_beg, il_end);
         return NULL;
@@ -107,6 +109,7 @@ sg_stage * sg_stage_open(const char * path, int il_beg, int il_end, int n_gpu_la
     cp.n_seq_max = (uint32_t) n_seq;
     // Separate KV per sequence, so each keeps the full n_ctx.
     cp.kv_unified = false;
+    cp.n_rs_seq = (uint32_t) (n_rollback > 0 ? n_rollback : 0);
     cp.n_threads = n_threads;
     cp.n_threads_batch = n_threads;
     if (il_end < n_layer) {
@@ -151,6 +154,16 @@ int sg_stage_architecture(const sg_stage * s, char * buf, size_t len) {
 }
 
 int sg_stage_n_seq(const sg_stage * s) { return s->n_seq; }
+// Positions a sequence can be rewound with sg_stage_rollback; 0 if the model cannot.
+int sg_stage_n_rollback(const sg_stage * s) { return (int) llama_n_rs_seq(s->ctx); }
+// Discards a sequence's positions from pos on, right after the batch that decoded them, without
+// a saved state. Returns 1 on success; 0 if more positions are dropped than the context keeps.
+int sg_stage_rollback(sg_stage * s, int seq, int pos) {
+    if (seq < 0 || seq >= s->n_seq || pos < 1) {
+        return 0;
+    }
+    return llama_memory_seq_rm(llama_get_memory(s->ctx), seq, pos, -1) ? 1 : 0;
+}
 // The stage's llama.cpp context, for the MTP head (shim_mtp.cpp).
 struct llama_context * sg_stage_context(sg_stage * s) { return s->ctx; }
 
