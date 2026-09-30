@@ -219,6 +219,7 @@ mod tests {
                 precision: "f32".into(),
                 pid: 1,
                 busy: false,
+                slots: 1,
                 memory: None,
             },
             &Keypair::generate_ed25519(),

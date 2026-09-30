@@ -18,9 +18,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     net::SocketAddr,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
@@ -35,8 +39,12 @@ pub struct Info {
     pub engine: String,
     pub precision: String,
     pub pid: u32,
+    /// True when every slot holds a live session.
     #[serde(default)]
     pub busy: bool,
+    /// Sessions the worker serves at once.
+    #[serde(default = "one_slot")]
+    pub slots: usize,
     #[serde(default)]
     pub memory: Option<crate::resources::Memory>,
     /// SHA-256 of the GGUF a llama.cpp worker loaded. Quantizing is not reproducible across
@@ -61,8 +69,16 @@ fn candle_engine() -> String {
     "candle".into()
 }
 
+fn one_slot() -> usize {
+    1
+}
+
+/// A session idle this long loses its slot.
+const SESSION_IDLE: Duration = Duration::from_secs(60);
+
 struct Session {
-    id: String,
+    /// The engine sequence that holds this session's cache.
+    slot: usize,
     position: usize,
     used: Instant,
     /// The state before the latest speculative batch, and that batch's inputs.
@@ -77,7 +93,44 @@ struct Draft {
 }
 struct Resident {
     model: Engine,
-    session: Option<Session>,
+    sessions: HashMap<String, Session>,
+}
+impl Resident {
+    /// Frees the slots of sessions idle past their expiry; returns their ids.
+    fn expire(&mut self) -> Vec<String> {
+        let stale: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(_, s)| s.used.elapsed() > SESSION_IDLE)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &stale {
+            self.end(id);
+        }
+        stale
+    }
+    /// Starts a session at position zero in a free slot, clearing whatever it held.
+    fn start(&mut self, id: &str) -> Result<&mut Session> {
+        let slot = (0..self.model.slots())
+            .find(|slot| self.sessions.values().all(|s| s.slot != *slot))
+            .context("all of this worker's slots are in use")?;
+        self.model.clear(slot);
+        Ok(self.sessions.entry(id.to_string()).or_insert(Session {
+            slot,
+            position: 0,
+            used: Instant::now(),
+            draft: None,
+        }))
+    }
+    fn end(&mut self, id: &str) -> bool {
+        match self.sessions.remove(id) {
+            Some(session) => {
+                self.model.clear(session.slot);
+                true
+            }
+            None => false,
+        }
+    }
 }
 /// A detached frame waiting to be passed to the next stage.
 struct Outgoing {
@@ -87,17 +140,23 @@ struct Outgoing {
 }
 /// A detached result kept by the last stage until the client collects it.
 struct Delivered {
-    session: String,
     position: usize,
     bytes: Vec<u8>,
 }
 #[derive(Clone)]
 struct Worker {
+    /// The engine and its sessions. Frames wait here for their turn on the device.
     resident: Arc<Mutex<Resident>>,
-    results: Arc<tokio::sync::watch::Sender<Option<Arc<Delivered>>>>,
-    /// Detached frames leave in the order this stage computed them, one at a time, so a
-    /// pipelined prompt's chunks cannot overtake each other.
-    outbox: tokio::sync::mpsc::UnboundedSender<Outgoing>,
+    /// Live sessions, readable without waiting for the engine.
+    active: Arc<AtomicUsize>,
+    /// The last stage's latest result for each session, until its client collects it.
+    results: Arc<Mutex<HashMap<String, Arc<Delivered>>>>,
+    /// Bumped whenever a result arrives, to wake waiting collectors.
+    delivered: Arc<tokio::sync::watch::Sender<u64>>,
+    /// One queue per session: a session's detached frames leave in the order this stage
+    /// computed them, so a pipelined prompt's chunks cannot overtake each other, while
+    /// different sessions send in parallel.
+    outboxes: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Outgoing>>>>,
     info: Info,
     manifest: Manifest,
     token: String,
@@ -111,6 +170,8 @@ pub struct EngineChoice<'a> {
     pub gguf: Option<&'a str>,
     /// Cap on the memory this worker may use, e.g. to act like an average laptop.
     pub memory_budget_mib: Option<u64>,
+    /// Sessions served at once, each with its own cache. Only llama.cpp supports more than one.
+    pub slots: usize,
 }
 
 pub async fn serve(
@@ -136,6 +197,10 @@ pub async fn serve(
     let (model, precision, weights_sha256, memory) = match engine.name {
         "candle" => {
             ensure!(engine.gguf.is_none(), "--gguf requires --engine llamacpp");
+            ensure!(
+                engine.slots == 1,
+                "--slots above 1 requires --engine llamacpp"
+            );
             ensure!(
                 manifest.sliced.is_none(),
                 "this model is published as GGUF slices; use --engine llamacpp"
@@ -174,14 +239,16 @@ pub async fn serve(
         "llamacpp" => open_llamacpp(dir, &manifest, &spec, &hash, backend, &engine)?,
         other => anyhow::bail!("unknown engine {other}"),
     };
-    let (outbox, mut outgoing) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
+    let slots = model.slots();
     let state = Worker {
-        outbox,
+        outboxes: Arc::default(),
         resident: Arc::new(Mutex::new(Resident {
             model,
-            session: None,
+            sessions: HashMap::new(),
         })),
-        results: Arc::new(tokio::sync::watch::channel(None).0),
+        active: Arc::default(),
+        results: Arc::default(),
+        delivered: Arc::new(tokio::sync::watch::channel(0).0),
         info: Info {
             model_id: manifest.model_id.clone(),
             model_hash: hash,
@@ -192,6 +259,7 @@ pub async fn serve(
             precision,
             pid: std::process::id(),
             busy: false,
+            slots,
             memory: Some(memory),
         },
         manifest,
@@ -199,31 +267,6 @@ pub async fn serve(
         http: server::client()?,
         allow_next,
     };
-    {
-        let state = state.clone();
-        tokio::spawn(async move {
-            while let Some(Outgoing { next, bytes, sent }) = outgoing.recv().await {
-                let passed: Result<()> = async {
-                    let response = state
-                        .http
-                        .post(url(next, "/v1/qwen/forward"))
-                        .bearer_auth(&state.token)
-                        .header("content-type", "application/octet-stream")
-                        .body(bytes)
-                        .send()
-                        .await?;
-                    let reply = super::wire::response(response).await?;
-                    ensure!(reply.accepts(&sent), "invalid downstream acknowledgement");
-                    Ok(())
-                }
-                .await;
-                if let Err(error) = passed {
-                    tracing::warn!(%error, session = %sent.session, "passing a detached frame on failed");
-                    discard(&state, &sent.session);
-                }
-            }
-        });
-    }
     let (engine_name, precision) = (state.info.engine.clone(), state.info.precision.clone());
     let app = Router::new()
         .route("/v1/qwen/info", get(info))
@@ -288,7 +331,10 @@ fn open_llamacpp(
     };
     // Until each worker has its own slice of the GGUF, budget for the whole file.
     let layers = (spec.end - spec.start) as u64;
-    let required = gguf.file_bytes + layers * 2 * 4096 * 2 * 64 * 4 + 384 * 1024 * 1024;
+    let slots = engine.slots as u64;
+    let required = gguf.file_bytes
+        + slots * layers * 2 * CONTEXT_LIMIT as u64 * 2 * 64 * 4
+        + 384 * 1024 * 1024;
     let memory = crate::resources::check_required(required, available, engine.memory_budget_mib)?;
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let stage = Stage::open(
@@ -298,6 +344,7 @@ fn open_llamacpp(
         &Options {
             gpu,
             context: CONTEXT_LIMIT,
+            slots: engine.slots,
             threads,
         },
     )?;
@@ -336,16 +383,48 @@ fn open_llamacpp(
 
 async fn info(State(state): State<Worker>) -> Json<Info> {
     let mut info = state.info;
-    info.busy = state
-        .resident
-        .try_lock()
-        .map(|r| {
-            r.session
-                .as_ref()
-                .is_some_and(|s| s.used.elapsed() < Duration::from_secs(60))
-        })
-        .unwrap_or(true);
+    info.busy = state.active.load(Ordering::Relaxed) >= info.slots;
     Json(info)
+}
+
+impl Worker {
+    /// Waits for the engine. Frames of different sessions take turns on the device.
+    fn engine(&self) -> MutexGuard<'_, Resident> {
+        self.resident.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Drops what this stage kept for ended sessions: queued frames and uncollected results.
+    fn forget(&self, ended: &[String]) {
+        if ended.is_empty() {
+            return;
+        }
+        let mut outboxes = self.outboxes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut results = self.results.lock().unwrap_or_else(|e| e.into_inner());
+        for id in ended {
+            outboxes.remove(id);
+            results.remove(id);
+        }
+    }
+    /// Runs `f` on the engine off the async runtime, then clears up sessions that ended.
+    async fn with_engine<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Resident) -> (T, Vec<String>) + Send + 'static,
+    ) -> Result<T> {
+        let worker = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut resident = worker.engine();
+            let mut ended = resident.expire();
+            let (value, more) = f(&mut resident);
+            ended.extend(more);
+            worker
+                .active
+                .store(resident.sessions.len(), Ordering::Relaxed);
+            drop(resident);
+            worker.forget(&ended);
+            value
+        })
+        .await
+        .context("engine task failed")
+    }
 }
 
 #[derive(Deserialize)]
@@ -356,49 +435,37 @@ async fn reserve(State(state): State<Worker>, Json(request): Json<Reset>) -> Res
     if uuid::Uuid::parse_str(&request.session).is_err() {
         return error(StatusCode::BAD_REQUEST, "invalid session");
     }
-    match state.resident.try_lock() {
-        Ok(mut resident) => {
-            if resident
-                .session
-                .as_ref()
-                .is_some_and(|s| s.used.elapsed() > Duration::from_secs(60))
-            {
-                resident.model.clear();
-                resident.session = None;
-            }
-            if let Some(session) = &mut resident.session {
-                if session.id != request.session {
-                    return error(StatusCode::CONFLICT, "worker reserved by another session");
+    let reserved = state
+        .with_engine(move |resident| {
+            let reserved = match resident.sessions.get_mut(&request.session) {
+                Some(session) => {
+                    session.used = Instant::now();
+                    true
                 }
-                session.used = Instant::now();
-            } else {
-                resident.session = Some(Session {
-                    id: request.session,
-                    position: 0,
-                    used: Instant::now(),
-                    draft: None,
-                });
-            }
-            Json(serde_json::json!({"reserved":true,"lease_seconds":60})).into_response()
-        }
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "worker busy"),
+                None => resident.start(&request.session).is_ok(),
+            };
+            (reserved, vec![])
+        })
+        .await;
+    match reserved {
+        Ok(true) => Json(serde_json::json!({"reserved":true,"lease_seconds":60})).into_response(),
+        Ok(false) => error(
+            StatusCode::CONFLICT,
+            "all of this worker's slots are in use",
+        ),
+        Err(err) => error(StatusCode::SERVICE_UNAVAILABLE, err),
     }
 }
 async fn reset(State(state): State<Worker>, Json(request): Json<Reset>) -> Response {
-    match state.resident.try_lock() {
-        Ok(mut resident) => {
-            if resident
-                .session
-                .as_ref()
-                .is_some_and(|s| s.id != request.session)
-            {
-                return error(StatusCode::CONFLICT, "another session owns this worker");
-            }
-            resident.model.clear();
-            resident.session = None;
-            Json(serde_json::json!({"reset":true})).into_response()
-        }
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "worker busy"),
+    let reset = state
+        .with_engine(move |resident| {
+            resident.end(&request.session);
+            ((), vec![request.session])
+        })
+        .await;
+    match reset {
+        Ok(()) => Json(serde_json::json!({"reset":true})).into_response(),
+        Err(err) => error(StatusCode::SERVICE_UNAVAILABLE, err),
     }
 }
 
@@ -475,138 +542,19 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
     let worker = state.clone();
     let session_id = frame.header.session.clone();
     let (position, seq_len) = (frame.header.position, frame.header.seq_len);
-    let calculation = tokio::task::spawn_blocking(move || -> Result<Frame> {
-        let mut resident = worker
-            .resident
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("worker busy"))?;
-        if resident
-            .session
-            .as_ref()
-            .is_some_and(|s| s.used.elapsed() > Duration::from_secs(60))
-        {
-            resident.model.clear();
-            resident.session = None;
-        }
-        let h = &frame.header;
-        let resident = &mut *resident;
-        if let Some(session) = &mut resident.session {
-            ensure!(
-                session.id == h.session,
-                "session mismatch or out-of-order position; reset required"
-            );
-            let previous = session.draft.take();
-            if session.position != h.position {
-                // The client accepted only part of the last speculative batch: restore the state
-                // from before it and replay the accepted inputs, which this stage kept.
-                let d = previous
-                    .filter(|d| d.position < h.position && h.position < d.position + d.seq_len)
-                    .context("session mismatch or out-of-order position; reset required")?;
-                let keep = h.position - d.position;
-                let width = d.values.len() / d.seq_len;
-                let replayed = resident.model.load_state(&d.state).and_then(|()| {
-                    resident.model.forward(
-                        &d.tokens[..d.tokens.len().min(keep)],
-                        &d.values[..(keep * width).min(d.values.len())],
-                        keep,
-                        d.position,
-                    )
-                });
-                if let Err(error) = replayed {
-                    resident.model.clear();
-                    resident.session = None;
-                    return Err(error);
-                }
-                session.position = h.position;
-            }
-        } else {
-            ensure!(h.position == 0, "new session must begin at position zero");
-        }
-        let draft = if h.speculative {
-            Some(Draft {
-                position: h.position,
-                state: resident.model.save_state()?,
-                tokens: h.tokens.clone(),
-                values: frame.values.clone(),
-                seq_len: h.seq_len,
-            })
-        } else {
-            None
-        };
-        let started = Instant::now();
-        let started_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
-        let last = h.route.len() == 1;
-        let computed = if last && h.sample && h.speculative {
-            resident
-                .model
-                .greedy(&h.tokens, &frame.values, h.seq_len, h.position)
-                .map(|ids| (Some(ids), vec![]))
-        } else {
-            resident
-                .model
-                .forward(&h.tokens, &frame.values, h.seq_len, h.position)
-                .map(|values| (None, values))
-        };
-        let (drafted, mut values) = match computed {
-            Ok(result) => result,
-            Err(error) => {
-                resident.model.clear();
-                resident.session = None;
-                return Err(error);
-            }
-        };
-        if let Some(ms) = simulated_ms_per_layer_token() {
-            let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
-            std::thread::sleep(Duration::from_secs_f64(
-                ms * layers * h.seq_len as f64 / 1000.0,
-            ));
-        }
-        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-        resident.session = Some(Session {
-            id: h.session.clone(),
-            position: h.position + h.seq_len,
-            used: Instant::now(),
-            draft,
-        });
-        let mut header = frame.header;
-        header.tokens.clear();
-        header.route.remove(0);
-        header.trace.push(Trace {
-            shard: worker.info.shard.index,
-            start: worker.info.shard.start,
-            end: worker.info.shard.end,
-            forward_ms: elapsed,
-            started_ms,
-        });
-        header.kind = if header.route.is_empty() {
-            Kind::Logits
-        } else {
-            Kind::Hidden
-        };
-        if let Some(ids) = drafted {
-            header.tokens = ids;
-            header.kind = Kind::Sampled;
-        } else if header.route.is_empty() && header.sample {
-            ensure!(
-                values.len() == worker.manifest.vocab_size()
-                    && values.iter().all(|v| v.is_finite()),
-                "invalid final logits"
-            );
-            let mut best = 0;
-            for i in 1..values.len() {
-                if values[i] > values[best] {
-                    best = i;
+    let calculation = state
+        .with_engine(move |resident| {
+            let session = frame.header.session.clone();
+            match compute(&worker, resident, frame) {
+                Ok(frame) => (Ok(frame), vec![]),
+                Err(error) => {
+                    // A failed step leaves this stage's cache in an unknown state.
+                    resident.end(&session);
+                    (Err(error), vec![session])
                 }
             }
-            header.tokens = vec![best as u32];
-            header.kind = Kind::Sampled;
-            values.clear();
-        }
-        Ok(Frame { header, values })
-    })
-    .await;
+        })
+        .await;
     let result: Result<Frame> = async {
         let frame = calculation??;
         if frame.header.detached {
@@ -642,20 +590,156 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
         Ok(bytes) => ([("content-type", "application/octet-stream")], bytes).into_response(),
         Err(err) => {
             tracing::warn!(error = %err, session = %session_id, position, seq_len, "forward failed; session discarded");
-            discard(&state, &session_id);
+            discard(&state, &session_id).await;
             error(StatusCode::SERVICE_UNAVAILABLE, err)
         }
     }
 }
 
 /// A partial chain cannot safely retry a position: discard this local session.
-fn discard(state: &Worker, session: &str) {
-    if let Ok(mut resident) = state.resident.try_lock()
-        && resident.session.as_ref().is_some_and(|s| s.id == session)
-    {
-        resident.model.clear();
-        resident.session = None;
+async fn discard(state: &Worker, session: &str) {
+    let session = session.to_string();
+    let _ = state
+        .with_engine(move |resident| {
+            resident.end(&session);
+            ((), vec![session])
+        })
+        .await;
+}
+
+/// Runs one frame of a session through this stage's layers, starting the session if new.
+fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Frame> {
+    let h = &frame.header;
+    let session = match resident.sessions.get_mut(&h.session) {
+        Some(session) => session,
+        None => {
+            ensure!(h.position == 0, "new session must begin at position zero");
+            resident.start(&h.session)?
+        }
+    };
+    let slot = session.slot;
+    let previous = session.draft.take();
+    if session.position != h.position {
+        // The client accepted only part of the last speculative batch: restore the state
+        // from before it and replay the accepted inputs, which this stage kept.
+        let d = previous
+            .filter(|d| d.position < h.position && h.position < d.position + d.seq_len)
+            .context("session mismatch or out-of-order position; reset required")?;
+        let keep = h.position - d.position;
+        let width = d.values.len() / d.seq_len;
+        resident.model.load_state(slot, &d.state)?;
+        resident.model.forward(
+            slot,
+            &d.tokens[..d.tokens.len().min(keep)],
+            &d.values[..(keep * width).min(d.values.len())],
+            keep,
+            d.position,
+        )?;
     }
+    let draft = if h.speculative {
+        Some(Draft {
+            position: h.position,
+            state: resident.model.save_state(slot)?,
+            tokens: h.tokens.clone(),
+            values: frame.values.clone(),
+            seq_len: h.seq_len,
+        })
+    } else {
+        None
+    };
+    let started = Instant::now();
+    let started_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+    let last = h.route.len() == 1;
+    let (drafted, mut values) = if last && h.sample && h.speculative {
+        let ids = resident
+            .model
+            .greedy(slot, &h.tokens, &frame.values, h.seq_len, h.position)?;
+        (Some(ids), vec![])
+    } else {
+        let values =
+            resident
+                .model
+                .forward(slot, &h.tokens, &frame.values, h.seq_len, h.position)?;
+        (None, values)
+    };
+    if let Some(ms) = simulated_ms_per_layer_token() {
+        let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
+        std::thread::sleep(Duration::from_secs_f64(
+            ms * layers * h.seq_len as f64 / 1000.0,
+        ));
+    }
+    let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+    let session = resident
+        .sessions
+        .get_mut(&h.session)
+        .context("session ended during its forward")?;
+    session.position = h.position + h.seq_len;
+    session.used = Instant::now();
+    session.draft = draft;
+    let mut header = frame.header;
+    header.tokens.clear();
+    header.route.remove(0);
+    header.trace.push(Trace {
+        shard: worker.info.shard.index,
+        start: worker.info.shard.start,
+        end: worker.info.shard.end,
+        forward_ms: elapsed,
+        started_ms,
+    });
+    header.kind = if header.route.is_empty() {
+        Kind::Logits
+    } else {
+        Kind::Hidden
+    };
+    if let Some(ids) = drafted {
+        header.tokens = ids;
+        header.kind = Kind::Sampled;
+    } else if header.route.is_empty() && header.sample {
+        ensure!(
+            values.len() == worker.manifest.vocab_size() && values.iter().all(|v| v.is_finite()),
+            "invalid final logits"
+        );
+        let mut best = 0;
+        for i in 1..values.len() {
+            if values[i] > values[best] {
+                best = i;
+            }
+        }
+        header.tokens = vec![best as u32];
+        header.kind = Kind::Sampled;
+        values.clear();
+    }
+    Ok(Frame { header, values })
+}
+
+/// Starts a session's outbox: its frames go to the next stage one at a time, in order.
+fn send_in_order(state: Worker) -> tokio::sync::mpsc::UnboundedSender<Outgoing> {
+    let (outbox, mut outgoing) = tokio::sync::mpsc::unbounded_channel::<Outgoing>();
+    tokio::spawn(async move {
+        while let Some(Outgoing { next, bytes, sent }) = outgoing.recv().await {
+            let passed: Result<()> = async {
+                let response = state
+                    .http
+                    .post(url(next, "/v1/qwen/forward"))
+                    .bearer_auth(&state.token)
+                    .header("content-type", "application/octet-stream")
+                    .body(bytes)
+                    .send()
+                    .await?;
+                let reply = super::wire::response(response).await?;
+                ensure!(reply.accepts(&sent), "invalid downstream acknowledgement");
+                Ok(())
+            }
+            .await;
+            if let Err(error) = passed {
+                tracing::warn!(%error, session = %sent.session, "passing a detached frame on failed");
+                discard(&state, &sent.session).await;
+            }
+        }
+    });
+    outbox
 }
 
 /// Queues a detached frame for the next stage, or keeps it at the last stage
@@ -673,17 +757,27 @@ fn detach(state: &Worker, frame: Frame) -> Result<Frame> {
     match sent.route.first() {
         Some(next) => {
             let next = next.address;
-            state
-                .outbox
+            let mut outboxes = state.outboxes.lock().unwrap_or_else(|e| e.into_inner());
+            let outbox = outboxes
+                .entry(sent.session.clone())
+                .or_insert_with(|| send_in_order(state.clone()));
+            outbox
                 .send(Outgoing { next, bytes, sent })
                 .map_err(|_| anyhow::anyhow!("outbox closed"))?;
         }
         None => {
-            state.results.send_replace(Some(Arc::new(Delivered {
-                session: sent.session,
-                position: sent.position,
-                bytes,
-            })));
+            state
+                .results
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(
+                    sent.session,
+                    Arc::new(Delivered {
+                        position: sent.position,
+                        bytes,
+                    }),
+                );
+            state.delivered.send_modify(|n| *n += 1);
         }
     }
     Ok(ack)
@@ -696,17 +790,22 @@ struct Collect {
 }
 /// Holds the request open until the last stage has the result for this session and position.
 async fn result(State(state): State<Worker>, Json(request): Json<Collect>) -> Response {
-    let mut results = state.results.subscribe();
-    let wanted = |d: &Option<Arc<Delivered>>| {
-        d.as_ref()
-            .is_some_and(|d| d.session == request.session && d.position == request.position)
-    };
+    let mut delivered = state.delivered.subscribe();
     let collected = tokio::time::timeout(super::RESULT_WAIT, async {
-        results
-            .wait_for(wanted)
-            .await
-            .ok()
-            .and_then(|d| d.as_ref().map(|d| d.bytes.clone()))
+        loop {
+            delivered.borrow_and_update();
+            let found = state
+                .results
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&request.session)
+                .filter(|d| d.position == request.position)
+                .map(|d| d.bytes.clone());
+            if found.is_some() {
+                return found;
+            }
+            delivered.changed().await.ok()?;
+        }
     })
     .await;
     match collected {

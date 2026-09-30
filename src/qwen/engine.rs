@@ -14,17 +14,31 @@ pub enum Engine {
 }
 
 impl Engine {
+    /// Sessions this engine can hold at once. Candle keeps one KV cache.
+    pub fn slots(&self) -> usize {
+        match self {
+            Engine::Candle(_) => 1,
+            #[cfg(feature = "llamacpp")]
+            Engine::LlamaCpp(stage) => stage.slots(),
+        }
+    }
+
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
     pub fn forward(
         &mut self,
+        slot: usize,
         tokens: &[u32],
         values: &[f32],
         seq_len: usize,
         position: usize,
     ) -> Result<Vec<f32>> {
         match self {
-            Engine::Candle(model) => Ok(model.forward(tokens, values, seq_len, position)?),
+            Engine::Candle(model) => {
+                anyhow::ensure!(slot == 0, "the candle engine has one slot");
+                Ok(model.forward(tokens, values, seq_len, position)?)
+            }
             #[cfg(feature = "llamacpp")]
-            Engine::LlamaCpp(stage) => Ok(stage.forward(tokens, values, seq_len, position)?),
+            Engine::LlamaCpp(stage) => Ok(stage.forward(slot, tokens, values, seq_len, position)?),
         }
     }
 
@@ -32,6 +46,7 @@ impl Engine {
     #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
     pub fn greedy(
         &mut self,
+        slot: usize,
         tokens: &[u32],
         values: &[f32],
         seq_len: usize,
@@ -40,33 +55,35 @@ impl Engine {
         match self {
             Engine::Candle(_) => anyhow::bail!("speculative decoding needs the llama.cpp engine"),
             #[cfg(feature = "llamacpp")]
-            Engine::LlamaCpp(stage) => Ok(stage.greedy(tokens, values, seq_len, position)?),
+            Engine::LlamaCpp(stage) => Ok(stage.greedy(slot, tokens, values, seq_len, position)?),
         }
     }
 
-    /// The session's cached state, to roll back rejected drafts.
-    pub fn save_state(&mut self) -> Result<Vec<u8>> {
+    /// A slot's cached state, to roll back rejected drafts.
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn save_state(&mut self, slot: usize) -> Result<Vec<u8>> {
         match self {
             Engine::Candle(_) => anyhow::bail!("speculative decoding needs the llama.cpp engine"),
             #[cfg(feature = "llamacpp")]
-            Engine::LlamaCpp(stage) => Ok(stage.save_state()?),
+            Engine::LlamaCpp(stage) => Ok(stage.save_state(slot)?),
         }
     }
 
     #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
-    pub fn load_state(&mut self, state: &[u8]) -> Result<()> {
+    pub fn load_state(&mut self, slot: usize, state: &[u8]) -> Result<()> {
         match self {
             Engine::Candle(_) => anyhow::bail!("speculative decoding needs the llama.cpp engine"),
             #[cfg(feature = "llamacpp")]
-            Engine::LlamaCpp(stage) => Ok(stage.load_state(state)?),
+            Engine::LlamaCpp(stage) => Ok(stage.load_state(slot, state)?),
         }
     }
 
-    pub fn clear(&mut self) {
+    #[cfg_attr(not(feature = "llamacpp"), allow(unused_variables))]
+    pub fn clear(&mut self, slot: usize) {
         match self {
             Engine::Candle(model) => model.clear(),
             #[cfg(feature = "llamacpp")]
-            Engine::LlamaCpp(stage) => stage.clear(),
+            Engine::LlamaCpp(stage) => stage.clear(slot),
         }
     }
 }

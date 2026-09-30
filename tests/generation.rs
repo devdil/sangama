@@ -69,6 +69,7 @@ async fn metadata_only_client_generates_stops_and_resets_without_a_baseline() {
     let (_, hash) = qwen::load_manifest(&dir.0).unwrap();
     let info = Info {
         busy: false,
+        slots: 1,
         memory: None,
         model_id: qwen::MODEL_ID.into(),
         model_hash: hash,

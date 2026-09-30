@@ -184,6 +184,9 @@ enum Command {
         /// Refuse to load a shard that needs more memory than this (MiB).
         #[arg(long)]
         memory_budget_mib: Option<u64>,
+        /// Sessions this worker serves at once, each with its own cache (llamacpp only).
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=256))]
+        slots: u16,
         #[arg(long, default_value = "127.0.0.1:7901")]
         listen: SocketAddr,
         /// Explicit permitted downstream loopback/tunnel endpoints.
@@ -459,6 +462,7 @@ async fn main() -> Result<()> {
             engine,
             gguf,
             memory_budget_mib,
+            slots,
             listen,
             allow_next,
         } => {
@@ -470,6 +474,7 @@ async fn main() -> Result<()> {
                     name: &engine,
                     gguf: gguf.as_deref(),
                     memory_budget_mib,
+                    slots: slots.into(),
                 },
                 listen,
                 token(cli.token)?,

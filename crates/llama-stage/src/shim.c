@@ -15,6 +15,7 @@ typedef struct sg_stage {
     int n_layer;
     int n_embd;
     int n_vocab;
+    int n_seq;
 } sg_stage;
 
 static void quiet_log(enum ggml_log_level level, const char * text, void * data) {
@@ -62,10 +63,15 @@ int sg_gpu_memory(size_t * free, size_t * total, char * name, size_t name_len) {
     return 0;
 }
 
+// n_ctx is per sequence; the context holds n_seq independent sequences (KV and recurrent state).
 sg_stage * sg_stage_open(const char * path, int il_beg, int il_end, int n_gpu_layers, int n_ctx,
-                         int n_threads, char * err, size_t err_len) {
+                         int n_seq, int n_threads, char * err, size_t err_len) {
     if (il_beg < 0 || il_beg >= il_end) {
         snprintf(err, err_len, "empty or negative layer range [%d, %d)", il_beg, il_end);
+        return NULL;
+    }
+    if (n_seq < 1 || n_seq > 256) { // llama.cpp's LLAMA_MAX_SEQ
+        snprintf(err, err_len, "sequence slots must be 1-256, got %d", n_seq);
         return NULL;
     }
     // The patched loader and context read the range from the environment; the Rust caller
@@ -95,10 +101,12 @@ sg_stage * sg_stage_open(const char * path, int il_beg, int il_end, int n_gpu_la
     }
 
     struct llama_context_params cp = llama_context_default_params();
-    cp.n_ctx = (uint32_t) n_ctx;
+    cp.n_ctx = (uint32_t) n_ctx * (uint32_t) n_seq;
     cp.n_batch = 512;
     cp.n_ubatch = 512;
-    cp.n_seq_max = 1;
+    cp.n_seq_max = (uint32_t) n_seq;
+    // Separate KV per sequence, so each keeps the full n_ctx.
+    cp.kv_unified = false;
     cp.n_threads = n_threads;
     cp.n_threads_batch = n_threads;
     if (il_end < n_layer) {
@@ -129,6 +137,7 @@ sg_stage * sg_stage_open(const char * path, int il_beg, int il_end, int n_gpu_la
     s->n_layer = n_layer;
     s->n_embd = llama_model_n_embd(model);
     s->n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
+    s->n_seq = n_seq;
     return s;
 }
 
@@ -141,14 +150,20 @@ int sg_stage_architecture(const sg_stage * s, char * buf, size_t len) {
     return llama_model_meta_val_str(s->model, "general.architecture", buf, len);
 }
 
-// Decodes n positions starting at pos. all_logits asks the final stage for every position's
-// logits rather than only the last.
-static int run(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
+int sg_stage_n_seq(const sg_stage * s) { return s->n_seq; }
+
+// Decodes n positions of sequence seq starting at pos. all_logits asks the final stage for
+// every position's logits rather than only the last.
+static int run(sg_stage * s, int seq, const int32_t * tokens, const float * hidden, int n, int pos,
                int all_logits, char * err, size_t err_len) {
     const int last = s->il_end == s->n_layer;
     const int takes_tokens = s->il_beg == 0;
     if (n <= 0) {
         snprintf(err, err_len, "bad decode size: n=%d", n);
+        return -1;
+    }
+    if (seq < 0 || seq >= s->n_seq) {
+        snprintf(err, err_len, "sequence %d outside 0-%d", seq, s->n_seq - 1);
         return -1;
     }
     if ((takes_tokens && !tokens) || (!takes_tokens && !hidden)) {
@@ -173,7 +188,7 @@ static int run(sg_stage * s, const int32_t * tokens, const float * hidden, int n
     }
     for (int i = 0; i < n; ++i) {
         batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
+        batch.seq_id[i][0] = seq;
         batch.logits[i] = last ? (all_logits || i == n - 1) : 1;
     }
     batch.n_tokens = n;
@@ -189,7 +204,7 @@ static int run(sg_stage * s, const int32_t * tokens, const float * hidden, int n
 // Runs n positions starting at pos. The first stage takes tokens, later stages take
 // n * n_embd hidden values. A non-final stage writes n * n_embd hidden values to out; the
 // final stage writes the logits of the last position (n_vocab values).
-int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
+int sg_stage_decode(sg_stage * s, int seq, const int32_t * tokens, const float * hidden, int n, int pos,
                     float * out, size_t out_len, char * err, size_t err_len) {
     const int last = s->il_end == s->n_layer;
     const size_t expected = last ? (size_t) s->n_vocab : (size_t) n * (size_t) s->n_embd;
@@ -197,7 +212,7 @@ int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, 
         snprintf(err, err_len, "bad decode size: n=%d out_len=%zu expected=%zu", n, out_len, expected);
         return -1;
     }
-    if (run(s, tokens, hidden, n, pos, 0, err, err_len) != 0) {
+    if (run(s, seq, tokens, hidden, n, pos, 0, err, err_len) != 0) {
         return -1;
     }
     const float * result = last ? llama_get_logits_ith(s->ctx, n - 1) : llama_get_embeddings(s->ctx);
@@ -210,13 +225,13 @@ int sg_stage_decode(sg_stage * s, const int32_t * tokens, const float * hidden, 
 }
 
 // Final stage only: the greedy next token after each of the n positions, to verify drafts.
-int sg_stage_decode_greedy(sg_stage * s, const int32_t * tokens, const float * hidden, int n, int pos,
+int sg_stage_decode_greedy(sg_stage * s, int seq, const int32_t * tokens, const float * hidden, int n, int pos,
                            int32_t * ids, char * err, size_t err_len) {
     if (s->il_end != s->n_layer) {
         snprintf(err, err_len, "only the final stage samples");
         return -1;
     }
-    if (run(s, tokens, hidden, n, pos, 1, err, err_len) != 0) {
+    if (run(s, seq, tokens, hidden, n, pos, 1, err, err_len) != 0) {
         return -1;
     }
     for (int i = 0; i < n; ++i) {
@@ -236,17 +251,20 @@ int sg_stage_decode_greedy(sg_stage * s, const int32_t * tokens, const float * h
     return 0;
 }
 
-// The sequence's cached state (attention KV and recurrent state), to roll back rejected drafts.
-size_t sg_stage_state_size(sg_stage * s) { return llama_state_seq_get_size(s->ctx, 0); }
-size_t sg_stage_state_save(sg_stage * s, uint8_t * buf, size_t len) {
-    return llama_state_seq_get_data(s->ctx, buf, len, 0);
+// A sequence's cached state (attention KV and recurrent state), to roll back rejected drafts.
+size_t sg_stage_state_size(sg_stage * s, int seq) { return llama_state_seq_get_size(s->ctx, seq); }
+size_t sg_stage_state_save(sg_stage * s, int seq, uint8_t * buf, size_t len) {
+    return llama_state_seq_get_data(s->ctx, buf, len, seq);
 }
-// Replaces the sequence's state with a saved one; returns 0 on failure.
-size_t sg_stage_state_load(sg_stage * s, const uint8_t * buf, size_t len) {
-    return llama_state_seq_set_data(s->ctx, buf, len, 0);
+// Replaces a sequence's state with a saved one; returns 0 on failure.
+size_t sg_stage_state_load(sg_stage * s, int seq, const uint8_t * buf, size_t len) {
+    return llama_state_seq_set_data(s->ctx, buf, len, seq);
 }
 
-void sg_stage_clear(sg_stage * s) { llama_memory_clear(llama_get_memory(s->ctx), true); }
+// Drops one sequence's cache so a new session can use its slot from position zero.
+void sg_stage_clear(sg_stage * s, int seq) {
+    llama_memory_seq_rm(llama_get_memory(s->ctx), seq, -1, -1);
+}
 
 void sg_stage_free(sg_stage * s) {
     if (s) {

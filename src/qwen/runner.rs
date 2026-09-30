@@ -920,7 +920,7 @@ async fn execute_chat(
             "Decode rate excludes the first generated token; token counts include EOS if emitted. This is one run, not a statistical performance benchmark.",
             "Worker forward_ms includes host/device tensor transfers. Generation samples greedily on the final worker and returns a token; verification returns complete logits.",
             "Tied embeddings are duplicated at the first and last stages. Each worker reads only its physical shard file, not the complete checkpoint.",
-            "One active session per worker, 4096-token context cap, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover.",
+            "Sessions per worker set by --slots (default 1), 4096-token context cap per session, fixed routes, loopback HTTP (use SSH tunnels between hosts); no automatic KV failover.",
         ],
     };
     drop(processes);
