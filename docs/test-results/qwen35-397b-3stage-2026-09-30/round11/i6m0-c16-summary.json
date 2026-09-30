@@ -1,0 +1,1 @@
+{"prefix": "i6m0", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 10.3, "tokens": 2048, "aggregate_tps": 199.4, "steady_tps": 257.6, "stream_tps_p50": 15.97, "stream_tps_p5": 14.06, "ttft_s_p50": 0.45, "ttft_s_p95": 1.02, "identical_to_solo": "7/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

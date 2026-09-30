@@ -1,0 +1,1 @@
+{"prefix": "i2d", "concurrency": 48, "ok": 48, "failed": 0, "wall_s": 34.4, "tokens": 6144, "aggregate_tps": 178.81, "steady_tps": 209.6, "stream_tps_p50": 4.3, "stream_tps_p5": 4.13, "ttft_s_p50": 0.59, "ttft_s_p95": 2.06, "identical_to_solo": "22/48", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

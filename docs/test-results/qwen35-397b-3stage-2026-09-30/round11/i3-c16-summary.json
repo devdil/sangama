@@ -1,0 +1,1 @@
+{"prefix": "i3", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 12.6, "tokens": 2048, "aggregate_tps": 162.84, "steady_tps": 194.9, "stream_tps_p50": 12.08, "stream_tps_p5": 11.46, "ttft_s_p50": 0.36, "ttft_s_p95": 0.54, "identical_to_solo": "6/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

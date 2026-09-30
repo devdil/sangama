@@ -1,0 +1,1 @@
+{"prefix": "i2b1", "concurrency": 48, "ok": 17, "failed": 31, "wall_s": 17.3, "tokens": 2176, "aggregate_tps": 125.62, "steady_tps": 169.7, "stream_tps_p50": 10.41, "stream_tps_p5": 8.42, "ttft_s_p50": 0.78, "ttft_s_p95": 2.04, "identical_to_solo": "9/17", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

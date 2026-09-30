@@ -1,0 +1,1 @@
+{"prefix": "i5", "concurrency": 64, "ok": 64, "failed": 0, "wall_s": 24.2, "tokens": 8192, "aggregate_tps": 339.12, "steady_tps": 448.6, "stream_tps_p50": 6.98, "stream_tps_p5": 6.16, "ttft_s_p50": 0.7, "ttft_s_p95": 1.06, "identical_to_solo": "22/64", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

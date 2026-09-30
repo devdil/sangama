@@ -1,0 +1,1 @@
+{"prefix": "i2c", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 14.0, "tokens": 2048, "aggregate_tps": 146.46, "steady_tps": 174.8, "stream_tps_p50": 10.9, "stream_tps_p5": 10.14, "ttft_s_p50": 0.32, "ttft_s_p95": 0.85, "identical_to_solo": "4/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

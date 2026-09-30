@@ -1,0 +1,1 @@
+{"prefix": "i6m4", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 9.5, "tokens": 1849, "aggregate_tps": 195.42, "steady_tps": 485.3, "stream_tps_p50": 26.61, "stream_tps_p5": 14.89, "ttft_s_p50": 0.44, "ttft_s_p95": 0.7, "identical_to_solo": "1/16", "mtp": 4, "tokens_per_pass": 3.28, "drafts_accepted": "1285/2164"}

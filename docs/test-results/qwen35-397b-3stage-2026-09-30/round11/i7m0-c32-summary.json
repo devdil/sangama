@@ -1,0 +1,1 @@
+{"prefix": "i7m0", "concurrency": 32, "ok": 32, "failed": 0, "wall_s": 26.7, "tokens": 8192, "aggregate_tps": 306.67, "steady_tps": 355.7, "stream_tps_p50": 11.14, "stream_tps_p5": 10.29, "ttft_s_p50": 0.49, "ttft_s_p95": 1.35, "identical_to_solo": "10/32", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

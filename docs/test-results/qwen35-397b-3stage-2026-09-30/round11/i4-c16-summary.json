@@ -1,0 +1,1 @@
+{"prefix": "i4", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 10.4, "tokens": 2048, "aggregate_tps": 197.74, "steady_tps": 262.5, "stream_tps_p50": 16.86, "stream_tps_p5": 14.6, "ttft_s_p50": 0.35, "ttft_s_p95": 1.01, "identical_to_solo": "6/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

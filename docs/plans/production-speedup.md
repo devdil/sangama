@@ -31,7 +31,7 @@ Round 10 tested these streams on three 96 GB cards in one datacenter. Results ar
 | D. Throughput ceiling | Instrumentation done and circuit cap lifted. It located a different ceiling on the close fleet: the last stage's GPU, one frame at a time. The twenty-stage ceiling is still open. |
 | E. Per-hop overhead | Cheap clean-up only. Measured 1.3 ms per hop on the close fleet. |
 | F. Fewer, larger stages | Done by layout: 3 stages ran one request at 48 tok/s, 107 with drafts. |
-| G. Batching | Not built. Now the measured limit on a close fleet, starting with the last stage. |
+| G. Batching | Built (round 11): plain throughput 119 to 403 tok/s at 48 requests, 449 at 64. Drafts with batching were wrong on the fleet; a local fix awaits a fleet run. |
 
 ## Work streams
 
