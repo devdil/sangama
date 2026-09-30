@@ -862,6 +862,10 @@ fn compute_batch(
     // Output of each ready frame, and the drafts the final stage proposes after it.
     let mut outputs: Vec<Option<Result<Output>>> = ready.iter().map(|_| None).collect();
     let mut drafts: Vec<Vec<u32>> = ready.iter().map(|_| vec![]).collect();
+    // The engine merges sequences into one step only when their slots are consecutive and
+    // increasing, so frames go in slot order.
+    let mut together = together;
+    together.sort_by_key(|&k| ready[k].1);
     // A device call holds at most MAX_BATCH_POSITIONS positions, so frames go in groups.
     let mut groups: Vec<Vec<usize>> = vec![];
     let mut size = 0;
