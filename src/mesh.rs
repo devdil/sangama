@@ -32,15 +32,16 @@ use std::{
 use tokio::sync::{Semaphore, mpsc, oneshot};
 const LIMIT: usize = crate::qwen::wire::MAX_FRAME_BYTES;
 // Sized for workers that serve many sessions at once (`qwen-worker --slots`): each session keeps
-// a result request open and sends one frame per token through every hop.
+// a result request open on the last stage while it waits, and sends one frame per token through
+// every hop, so these must exceed the sessions a worker serves (up to 256).
 /// Requests a local bridge forwards at once.
-const BRIDGE_CONCURRENCY: usize = 64;
+const BRIDGE_CONCURRENCY: usize = 512;
 /// Requests this node serves for peers at once.
-const SERVE_CONCURRENCY: usize = 64;
+const SERVE_CONCURRENCY: usize = 512;
 /// Calls to peers this node has in flight at once.
-const PENDING_CALLS: usize = 256;
+const PENDING_CALLS: usize = 1024;
 /// Streams at once over one connection, e.g. one relayed circuit between two stages.
-const STREAMS_PER_CONNECTION: usize = 128;
+const STREAMS_PER_CONNECTION: usize = 512;
 /// Per-peer requests and reply bytes in each 60-second window.
 const PEER_REQUESTS_PER_MINUTE: usize = 20_000;
 const PEER_BYTES_PER_MINUTE: usize = 2 << 30;
