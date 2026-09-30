@@ -96,9 +96,17 @@ fn interleaved_slots_match_solo_generation() {
     assert_eq!(stages[0].slots(), 4);
     // Distinct prompts of different lengths: chat-format prefixes of "Explain ..." and two others.
     let prompts: Vec<Vec<u32>> = vec![
-        vec![151644, 872, 198, 840, 20772, 14397, 4686, 78597, 24231, 13, 151645, 198, 151644, 77091, 198],
-        vec![151644, 872, 198, 3838, 374, 279, 6722, 315, 9625, 30, 151645, 198, 151644, 77091, 198],
-        vec![151644, 872, 198, 7985, 264, 32794, 911, 279, 9396, 13, 151645, 198, 151644, 77091, 198, 785],
+        vec![
+            151644, 872, 198, 840, 20772, 14397, 4686, 78597, 24231, 13, 151645, 198, 151644,
+            77091, 198,
+        ],
+        vec![
+            151644, 872, 198, 3838, 374, 279, 6722, 315, 9625, 30, 151645, 198, 151644, 77091, 198,
+        ],
+        vec![
+            151644, 872, 198, 7985, 264, 32794, 911, 279, 9396, 13, 151645, 198, 151644, 77091,
+            198, 785,
+        ],
     ];
     struct Run {
         input: Vec<u32>,
@@ -160,4 +168,62 @@ fn interleaved_slots_match_solo_generation() {
     let saved = stages[1].save_state(2).unwrap();
     assert!(!saved.is_empty());
     stages[1].load_state(2, &saved).unwrap();
+}
+
+/// Any first stage, e.g. a Qwen3.5 slice with recurrent layers: SANGAMA_TEST_FIRST_STAGE=END runs
+/// layers 0..END. Interleaved slots must give bit-identical outputs to one session at a time.
+#[test]
+fn first_stage_slots_are_isolated() {
+    let (Some(path), Some(end)) = (
+        model(),
+        std::env::var("SANGAMA_TEST_FIRST_STAGE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok()),
+    ) else {
+        return;
+    };
+    let mut stage = Stage::open(&path, 0, end, &options()).unwrap();
+    let prompts: [Vec<u32>; 3] = [
+        (100..140).collect(),
+        (2000..2025).collect(),
+        (7000..7033).collect(),
+    ];
+    // Prompt, then six single-token steps, as in decoding.
+    let steps = |p: &Vec<u32>| {
+        let mut s = vec![p.clone()];
+        s.extend((0..6).map(|i| vec![p[i] + 1]));
+        s
+    };
+    let mut solo = Vec::new();
+    for p in &prompts {
+        stage.clear(0);
+        let mut position = 0;
+        let mut outs = Vec::new();
+        for input in steps(p) {
+            outs.push(
+                stage
+                    .forward(0, &input, &[], input.len(), position)
+                    .unwrap(),
+            );
+            position += input.len();
+        }
+        solo.push(outs);
+    }
+    stage.clear(0);
+    let mut positions = [0usize; 3];
+    let all: Vec<Vec<Vec<u32>>> = prompts.iter().map(steps).collect();
+    for step in 0..all[0].len() {
+        for k in 0..3 {
+            let input = &all[k][step];
+            let out = stage
+                .forward(k + 1, input, &[], input.len(), positions[k])
+                .unwrap();
+            positions[k] += input.len();
+            assert!(
+                out == solo[k][step],
+                "slot {} step {step} differs from solo",
+                k + 1
+            );
+        }
+    }
 }

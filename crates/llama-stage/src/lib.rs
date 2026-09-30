@@ -62,12 +62,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn sg_stage_state_size(stage: *mut RawStage, seq: c_int) -> usize;
     fn sg_stage_state_save(stage: *mut RawStage, seq: c_int, buf: *mut u8, len: usize) -> usize;
-    fn sg_stage_state_load(
-        stage: *mut RawStage,
-        seq: c_int,
-        buf: *const u8,
-        len: usize,
-    ) -> usize;
+    fn sg_stage_state_load(stage: *mut RawStage, seq: c_int, buf: *const u8, len: usize) -> usize;
     fn sg_stage_clear(stage: *mut RawStage, seq: c_int);
     fn sg_stage_free(stage: *mut RawStage);
 }
