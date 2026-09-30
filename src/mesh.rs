@@ -62,6 +62,11 @@ pub struct Config {
     #[serde(default)]
     pub test_http: bool,
     pub listen: Multiaddr,
+    /// Also listen for QUIC here, e.g. `/ip4/0.0.0.0/udp/9000/quic-v1`. Streams of different
+    /// sessions then do not wait on each other's lost packets, as they do over one TCP
+    /// connection. A relay or peer address in QUIC form is dialled over QUIC.
+    #[serde(default)]
+    pub listen_quic: Option<Multiaddr>,
     #[serde(default)]
     pub external: Vec<Multiaddr>,
     #[serde(default)]
@@ -518,6 +523,13 @@ pub async fn run(path: &Path) -> Result<()> {
                 .multiplex(multiplexer())
                 .boxed()
         })?
+        .with_other_transport(|key| {
+            crate::mesh_transport::GuardedQuic::new(key, c.relay.as_ref(), c.force_relay)
+                .map(|(peer, connection), _| {
+                    (peer, libp2p::core::muxing::StreamMuxerBox::new(connection))
+                })
+                .boxed()
+        })?
         .with_relay_client(noise::Config::new, multiplexer)?
         .with_behaviour(|key, relay_client| {
             let rc = relay::Config {
@@ -600,6 +612,9 @@ pub async fn run(path: &Path) -> Result<()> {
         }
     }
     swarm.listen_on(c.listen.clone())?;
+    if let Some(address) = &c.listen_quic {
+        swarm.listen_on(address.clone())?;
+    }
     for a in &c.external {
         swarm.add_external_address(a.clone());
     }

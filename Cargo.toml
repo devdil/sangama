@@ -27,7 +27,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 sha2 = "0.10"
 subtle = "2.6"
 libc = "0.2"
-libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp", "noise", "yamux", "kad", "macros", "identify", "relay", "dcutr", "autonat", "request-response", "cbor"] }
+libp2p = { version = "0.56", default-features = false, features = ["tokio", "tcp", "quic", "noise", "yamux", "kad", "macros", "identify", "relay", "dcutr", "autonat", "request-response", "cbor"] }
 futures = "0.3"
 fs2 = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
