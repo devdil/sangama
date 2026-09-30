@@ -31,6 +31,17 @@ use std::{
 };
 use tokio::sync::{Semaphore, mpsc, oneshot};
 const LIMIT: usize = crate::qwen::wire::MAX_FRAME_BYTES;
+// Sized for workers that serve many sessions at once (`qwen-worker --slots`): each session keeps
+// a result request open and sends one frame per token through every hop.
+/// Requests a local bridge forwards at once.
+const BRIDGE_CONCURRENCY: usize = 64;
+/// Requests this node serves for peers at once.
+const SERVE_CONCURRENCY: usize = 64;
+/// Streams at once over one connection, e.g. one relayed circuit between two stages.
+const STREAMS_PER_CONNECTION: usize = 128;
+/// Per-peer requests and reply bytes in each 60-second window.
+const PEER_REQUESTS_PER_MINUTE: usize = 20_000;
+const PEER_BYTES_PER_MINUTE: usize = 2 << 30;
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -564,7 +575,7 @@ pub async fn run(path: &Path) -> Result<()> {
                     )],
                     rr::Config::default()
                         .with_request_timeout(Duration::from_secs(60))
-                        .with_max_concurrent_streams(16),
+                        .with_max_concurrent_streams(STREAMS_PER_CONNECTION),
                 ),
             }
         })?
@@ -639,7 +650,7 @@ pub async fn run(path: &Path) -> Result<()> {
             tx: tx.clone(),
             peer: b.peer.parse()?,
             token: token.clone(),
-            slots: Arc::new(Semaphore::new(4)),
+            slots: Arc::new(Semaphore::new(BRIDGE_CONCURRENCY)),
             meter: meter.clone(),
             bridges: bridges.clone(),
         };
@@ -729,7 +740,7 @@ pub async fn run(path: &Path) -> Result<()> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(55))
         .build()?;
-    let slots = Arc::new(Semaphore::new(8));
+    let slots = Arc::new(Semaphore::new(SERVE_CONCURRENCY));
     let owners = Arc::new(std::sync::Mutex::new(crate::mesh_owner::Owners::new(
         c.bridges
             .iter()
@@ -807,7 +818,7 @@ pub async fn run(path: &Path) -> Result<()> {
                     let id=swarm.behaviour_mut().rpc.send_request(&peer,request);pending.insert(id,(peer,result));
                 },
                 Command::Reply {peer,channel,mut reply}=>{
-                    if let Some(q)=quota.get_mut(&peer) {q.2=q.2.saturating_add(reply.body.len());if q.2>128*1024*1024 {reply=Reply::error(429,"Peer byte quota exceeded");}}
+                    if let Some(q)=quota.get_mut(&peer) {q.2=q.2.saturating_add(reply.body.len());if q.2>PEER_BYTES_PER_MINUTE {reply=Reply::error(429,"Peer byte quota exceeded");}}
                     let reply=if membership.snapshot.expires>now() && allowed.contains(&peer) && allowed.contains(&me) {reply} else {Reply::error(403,"Membership expired")};let _=swarm.behaviour_mut().rpc.send_response(channel,reply);},
             },
             event=swarm.select_next_some()=>match event {
@@ -842,7 +853,7 @@ pub async fn run(path: &Path) -> Result<()> {
                         if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || !valid_path(&request.path) || request.body.len()>LIMIT {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,"Request denied"));continue;}
                         let q=quota.entry(peer).or_insert((Instant::now(),0,0));if q.0.elapsed()>Duration::from_secs(60) {*q=(Instant::now(),0,0);}
                         q.1+=1;q.2+=request.body.len();
-                        if q.1>1200 || q.2>128*1024*1024 {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(429,"Peer quota exceeded"));continue;}
+                        if q.1>PEER_REQUESTS_PER_MINUTE || q.2>PEER_BYTES_PER_MINUTE {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(429,"Peer quota exceeded"));continue;}
                         if request.path=="/v1/qwen/reserve" && crate::credits::over_allowance(standing.as_ref(),&peer) {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(402,"Credit allowance used up: contribute a worker or wait for credits"));continue;}
                         // The local worker trusts one shared token; bind reservations to the verified peer here.
                         let pending=match owners.lock().unwrap().admit(peer,&role,&request.path,&request.body,Instant::now()) {
