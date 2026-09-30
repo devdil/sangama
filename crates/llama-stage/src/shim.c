@@ -109,8 +109,11 @@ sg_stage * sg_stage_open(const char * path, int il_beg, int il_end, int n_gpu_la
     cp.n_batch = 512;
     cp.n_ubatch = 512;
     cp.n_seq_max = (uint32_t) n_seq;
-    // Separate KV per sequence, so each keeps the full n_ctx.
-    cp.kv_unified = false;
+    // Separate KV per sequence, so each keeps the full n_ctx. With separate KV llama.cpp only
+    // merges sequences into one step when their ids are consecutive; SANGAMA_KV_UNIFIED=1 shares
+    // one attention buffer of n_ctx * n_seq cells instead, which lifts that rule.
+    const char * unified = getenv("SANGAMA_KV_UNIFIED");
+    cp.kv_unified = unified && unified[0] == '1';
     cp.n_rs_seq = (uint32_t) (n_rollback > 0 ? n_rollback : 0);
     cp.n_threads = n_threads;
     cp.n_threads_batch = n_threads;
