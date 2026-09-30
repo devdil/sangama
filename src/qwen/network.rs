@@ -128,6 +128,9 @@ struct Session {
     used: Instant,
     /// The state before the latest speculative batch, and that batch's inputs.
     draft: Option<Draft>,
+    /// Share of this session's recent drafts the model accepted. Code is drafted far better
+    /// than prose, so each session keeps its own.
+    accepted: f64,
 }
 struct Draft {
     position: usize,
@@ -152,8 +155,6 @@ struct Load {
     busy: Duration,
     /// Share of recent time the engine spent computing.
     level: f64,
-    /// Share of recent drafts the model accepted.
-    accepted: f64,
 }
 impl Load {
     fn new() -> Self {
@@ -161,7 +162,6 @@ impl Load {
             since: Instant::now(),
             busy: Duration::ZERO,
             level: 0.0,
-            accepted: 0.8,
         }
     }
     /// Counts `busy` computing time and, every fifth of a second, averages the busy share of
@@ -179,7 +179,8 @@ impl Load {
     /// Drafts to propose to a session that asked for `wanted`: the number that gives the
     /// most tokens per second. `call` is how long the device call took for `positions`
     /// positions of `frames` decoding sessions, `period` how long since this session's last
-    /// step finished here, and `stages` the route's length.
+    /// step finished here, `accepted` the share of its drafts that were right, and `stages`
+    /// the route's length.
     ///
     /// A pass costs the time outside the engines, which drafts do not change, plus each
     /// stage's compute, which grows with every position: measured on 96 GB cards, a call
@@ -193,6 +194,7 @@ impl Load {
         positions: usize,
         frames: usize,
         period: Duration,
+        accepted: f64,
         stages: usize,
     ) -> usize {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -210,7 +212,7 @@ impl Load {
         } else {
             (period.as_secs_f64() - stages * call).max(0.0)
         };
-        let p = self.accepted.clamp(0.05, 0.98);
+        let p = accepted.clamp(0.05, 0.98);
         let rate = |k: usize| {
             let tokens = (1.0 - p.powi(k as i32 + 1)) / (1.0 - p);
             let pass = outside + stages * per_position * (FIXED + (frames.max(1) * (1 + k)) as f64);
@@ -244,6 +246,7 @@ impl Resident {
             position: 0,
             used: Instant::now(),
             draft: None,
+            accepted: 0.8,
         }))
     }
     fn end(&mut self, id: &str) -> bool {
@@ -1176,20 +1179,28 @@ fn draft_after(
                     .take_while(|(draft, model)| draft == model)
                     .count();
                 let share = accepted as f64 / (h.seq_len - 1) as f64;
-                resident.load.accepted = 0.95 * resident.load.accepted + 0.05 * share;
+                if let Some(session) = resident.sessions.get_mut(&h.session) {
+                    session.accepted = 0.8 * session.accepted + 0.2 * share;
+                }
                 (accepted + 1, ids[accepted])
             }
             Output::Tokens(ids) => (h.seq_len, ids[0]),
             Output::Values(values) => (h.seq_len, argmax(values) as u32),
         };
         let wanted = if h.sample && h.mtp_drafts > 0 {
-            let period = resident
+            let (period, accepted) = resident
                 .sessions
                 .get(&h.session)
-                .map_or(Duration::ZERO, |s| s.used.elapsed());
-            resident
-                .load
-                .drafts(h.mtp_drafts, call, positions, decoding, period, stages)
+                .map_or((Duration::ZERO, 0.8), |s| (s.used.elapsed(), s.accepted));
+            resident.load.drafts(
+                h.mtp_drafts,
+                call,
+                positions,
+                decoding,
+                period,
+                accepted,
+                stages,
+            )
         } else {
             0
         };
@@ -1377,15 +1388,14 @@ mod draft_tests {
         let ms = Duration::from_millis;
         let mut load = Load::new();
         // One request across three far-apart stages: the network dominates, so draft fully.
-        assert_eq!(load.drafts(4, ms(5), 1, 1, ms(100), 3), 4);
+        assert_eq!(load.drafts(4, ms(5), 1, 1, ms(100), 0.8, 3), 4);
         // One request in one room: the first position of a call is the dear one.
-        assert_eq!(load.drafts(4, ms(5), 1, 1, ms(20), 3), 4);
+        assert_eq!(load.drafts(4, ms(5), 1, 1, ms(20), 0.8, 3), 4);
         // A saturated engine: every draft takes a position from another request's token.
         load.level = 0.95;
-        assert_eq!(load.drafts(4, ms(20), 16, 16, ms(60), 3), 0);
+        assert_eq!(load.drafts(4, ms(20), 16, 16, ms(60), 0.8, 3), 0);
         // Drafts that are rarely right are not worth a position anywhere busy.
         load.level = 0.5;
-        load.accepted = 0.2;
-        assert!(load.drafts(8, ms(20), 16, 16, ms(70), 3) <= 1);
+        assert!(load.drafts(8, ms(20), 16, 16, ms(70), 0.2, 3) <= 1);
     }
 }
