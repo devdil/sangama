@@ -162,6 +162,13 @@ pub struct Breakdown {
     pub decode_compute_ms_p50: f64,
     pub decode_other_ms_p50: f64,
     pub decode_other_ms_p95: f64,
+    /// Of `decode_other`: time frames spent inside workers before computing (decoding the
+    /// frame, waiting for the engine, rewinding drafts), summed over stages. The rest is
+    /// transit: the network and the mesh processes.
+    #[serde(default)]
+    pub decode_wait_ms_p50: f64,
+    #[serde(default)]
+    pub decode_transit_ms_p50: f64,
 }
 
 fn percentile(values: &[f64], p: f64) -> f64 {
@@ -174,7 +181,7 @@ fn percentile(values: &[f64], p: f64) -> f64 {
 }
 
 impl Breakdown {
-    fn new(times: &[f64], stage_ms: &[Vec<f64>], trace: &[Trace]) -> Self {
+    fn new(times: &[f64], stage_ms: &[Vec<f64>], wait_ms: &[f64], trace: &[Trace]) -> Self {
         let compute: Vec<f64> = stage_ms.iter().map(|s| s.iter().sum()).collect();
         let decode = times.get(1..).unwrap_or(&[]);
         let decode_compute = compute.get(1..).unwrap_or(&[]);
@@ -182,6 +189,12 @@ impl Breakdown {
             .iter()
             .zip(decode_compute)
             .map(|(t, c)| (t - c).max(0.0))
+            .collect();
+        let decode_wait = wait_ms.get(1..).unwrap_or(&[]);
+        let transit: Vec<f64> = other
+            .iter()
+            .zip(decode_wait)
+            .map(|(o, w)| (o - w).max(0.0))
             .collect();
         let stages = trace
             .iter()
@@ -213,6 +226,8 @@ impl Breakdown {
             decode_compute_ms_p50: percentile(decode_compute, 0.5),
             decode_other_ms_p50: percentile(&other, 0.5),
             decode_other_ms_p95: percentile(&other, 0.95),
+            decode_wait_ms_p50: percentile(decode_wait, 0.5),
+            decode_transit_ms_p50: percentile(&transit, 0.5),
         }
     }
 }
@@ -743,6 +758,7 @@ async fn execute_chat(
         let mut last_trace = Vec::new();
         let mut first_trace = None;
         let mut token_stage_ms: Vec<Vec<f64>> = Vec::new();
+        let mut token_wait_ms: Vec<f64> = Vec::new();
         let mut finish_reason = "max_tokens";
         let (mut drafted, mut kept, mut steps) = (0usize, 0usize, 0usize);
         let limit = local.as_ref().map_or(options.max_tokens, |b| b.ids.len());
@@ -780,6 +796,8 @@ async fn execute_chat(
             let mut last: Option<Frame> = None;
             // Compute time each stage spent on this step, summed over prompt chunks.
             let mut stage_ms = vec![0.0; route.len()];
+            // Time frames waited inside workers before computing, summed over stages.
+            let mut wait_ms = 0.0;
             let chunks = context.chunks(chunk_tokens).count();
             for (n, chunk) in context.chunks(chunk_tokens).enumerate() {
                 if let Some(sender) = &deltas {
@@ -802,6 +820,9 @@ async fn execute_chat(
                 for trace in &response.header.trace {
                     if let Some(total) = stage_ms.get_mut(trace.shard) {
                         *total += trace.forward_ms;
+                    }
+                    if trace.received_ms > 0.0 {
+                        wait_ms += (trace.started_ms - trace.received_ms).max(0.0);
                     }
                 }
                 last = Some(response);
@@ -829,6 +850,7 @@ async fn execute_chat(
                 vec![greedy(&result.values)?]
             };
             steps += 1;
+            let produced_len = produced.len() as f64;
             let share = now.elapsed().as_secs_f64() * 1000.0 / produced.len() as f64;
             let stage_share: Vec<f64> = stage_ms
                 .iter()
@@ -845,6 +867,7 @@ async fn execute_chat(
                 let index = ids.len();
                 times.push(share);
                 token_stage_ms.push(stage_share.clone());
+                token_wait_ms.push(wait_ms / produced_len);
                 ids.push(id);
                 if let Some(sender) = &deltas
                     && let Some(delta) = decoder
@@ -879,6 +902,7 @@ async fn execute_chat(
             first_trace.unwrap_or_default(),
             finish_reason,
             token_stage_ms,
+            token_wait_ms,
             Speculation {
                 drafted,
                 accepted: kept,
@@ -888,9 +912,18 @@ async fn execute_chat(
     }
     .await;
     let cleanup = reset(&http, &addresses, &options.token, &session).await;
-    let (ids, times, maximum_error, trace, first_trace, finish_reason, token_stage_ms, speculation) =
-        measurement?;
-    let breakdown = Breakdown::new(&times, &token_stage_ms, &trace);
+    let (
+        ids,
+        times,
+        maximum_error,
+        trace,
+        first_trace,
+        finish_reason,
+        token_stage_ms,
+        token_wait_ms,
+        speculation,
+    ) = measurement?;
+    let breakdown = Breakdown::new(&times, &token_stage_ms, &token_wait_ms, &trace);
     cleanup?;
     let tokens_match = local.as_ref().map(|local| ids == local.ids);
     let report = Report {

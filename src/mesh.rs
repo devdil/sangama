@@ -531,8 +531,10 @@ pub async fn run(path: &Path) -> Result<()> {
                 // A circuit carries whole inference sessions. Closing it mid-request fails
                 // that request (there is no safe replay of a KV-cache step), so circuits must
                 // outlive normal sessions; admitted-member and per-peer limits still apply.
-                max_circuit_duration: Duration::from_secs(60 * 60),
-                max_circuit_bytes: 1024 * 1024 * 1024,
+                // One circuit carries every session between two stages, about 10 KB per token,
+                // so a byte cap is reached in normal use: 1 GiB lasted roughly 100,000 tokens.
+                max_circuit_duration: Duration::from_secs(24 * 60 * 60),
+                max_circuit_bytes: 1 << 40,
                 // libp2p's defaults refill one reservation token per minute per IP and one per
                 // two minutes per peer. Members renew every ~90 s, so peers behind one NAT
                 // (measured: 21 container peers seen as one address) exhausted the IP bucket in
@@ -759,13 +761,22 @@ pub async fn run(path: &Path) -> Result<()> {
     let mut connections: HashMap<libp2p::swarm::ConnectionId, (PeerId, bool)> = HashMap::new();
     let mut search_tick = tokio::time::interval(Duration::from_secs(10));
     let mut tick = tokio::time::interval(Duration::from_secs(1));
+    // Load of this event loop, which handles every request of every session in turn.
+    let (mut woke, mut busy, mut served, mut reported) =
+        (Instant::now(), Duration::ZERO, 0u64, Instant::now());
+    let worker_calls = Arc::new((
+        std::sync::atomic::AtomicU64::new(0),
+        std::sync::atomic::AtomicU64::new(0),
+    ));
     let shutdown = shutdown();
     tokio::pin!(shutdown);
     tracing::info!(peer=%me,role=own_role,"mesh started");
     loop {
+        busy += woke.elapsed();
         tokio::select! {
             _=&mut shutdown=>break,
             _=search_tick.tick()=>{
+                woke=Instant::now();
                 if membership.snapshot.expires>now() && allowed.contains(&me) {
                     for m in membership.snapshot.members.iter().filter(|m|m.role=="worker" && m.expires>now()).take(32) {
                         let p:PeerId=m.peer.parse()?;
@@ -776,6 +787,34 @@ pub async fn run(path: &Path) -> Result<()> {
                 }
             },
             _=tick.tick()=>{
+                woke=Instant::now();
+                // Frames go out over every connection to a peer in turn, so once a direct
+                // connection exists the relayed one is closed; a call re-dials the circuit if
+                // the direct one is lost. Peers with calls in flight are left for a later tick.
+                if !c.force_relay {
+                    let direct:HashSet<PeerId>=connections.values().filter(|(_,relayed)|!relayed).map(|(p,_)|*p).collect();
+                    let relayed:Vec<(libp2p::swarm::ConnectionId,PeerId)>=connections.iter().filter(|(_,(p,relayed))|*relayed && direct.contains(p)).map(|(id,(p,_))|(*id,*p)).collect();
+                    for (id,p) in relayed {
+                        if !pending.values().any(|(q,_)|*q==p) && swarm.close_connection(id) {tracing::info!(peer=%p,"direct connection established; closed the relayed one");}
+                    }
+                }
+                if reported.elapsed()>=Duration::from_secs(10) {
+                    use std::sync::atomic::Ordering::Relaxed;
+                    let (calls,micros)=(worker_calls.0.swap(0,Relaxed),worker_calls.1.swap(0,Relaxed));
+                    if served>0 || calls>0 {
+                        let seconds=reported.elapsed().as_secs_f64();
+                        tracing::info!(
+                            loop_busy_pct=(100.0*busy.as_secs_f64()/seconds).round(),
+                            requests_per_s=(served as f64/seconds).round(),
+                            worker_call_ms=if calls>0 {(micros as f64/calls as f64/100.0).round()/10.0} else {0.0},
+                            in_flight=pending.len(),
+                            direct=connections.values().filter(|(_,r)|!r).count(),
+                            relayed=connections.values().filter(|(_,r)|*r).count(),
+                            "mesh load"
+                        );
+                    }
+                    (busy,served,reported)=(Duration::ZERO,0,Instant::now());
+                }
                 let active=membership.snapshot.expires>now() && membership.snapshot.members.iter().any(|m|m.peer==me.to_string() && m.role==own_role && m.expires>now());
                 let next:HashSet<PeerId>=if active {membership.snapshot.members.iter().filter(|m|m.expires>now()).filter_map(|m|m.peer.parse().ok()).collect()} else {HashSet::new()};
                 for p in allowed.difference(&next) {swarm.behaviour_mut().allow.disallow_peer(*p);let _=swarm.disconnect_peer_id(*p);tracing::warn!(peer=%p,"membership expired or revoked; disconnected");}
@@ -791,7 +830,7 @@ pub async fn run(path: &Path) -> Result<()> {
                 ad_quota.retain(|p,_|allowed.contains(p));
                 offers.retain(|p,o|allowed.contains(p) && o.expires>now());
             },
-            Some(command)=rx.recv()=>match command {
+            Some(command)=rx.recv()=>{woke=Instant::now();match command {
                 Command::Status(peer,result)=>{
                     let member=membership.snapshot.members.iter().find(|m|m.peer==peer.to_string());
                     let paths: Vec<&str> = connections.values().filter(|(p,_)|*p==peer).map(|(_,relay)|if *relay {"relay"} else {"direct"}).collect();
@@ -823,8 +862,8 @@ pub async fn run(path: &Path) -> Result<()> {
                 Command::Reply {peer,channel,mut reply}=>{
                     if let Some(q)=quota.get_mut(&peer) {q.2=q.2.saturating_add(reply.body.len());if q.2>PEER_BYTES_PER_MINUTE {reply=Reply::error(429,"Peer byte quota exceeded");}}
                     let reply=if membership.snapshot.expires>now() && allowed.contains(&peer) && allowed.contains(&me) {reply} else {Reply::error(403,"Membership expired")};let _=swarm.behaviour_mut().rpc.send_response(channel,reply);},
-            },
-            event=swarm.select_next_some()=>match event {
+            }},
+            event=swarm.select_next_some()=>{woke=Instant::now();match event {
                 SwarmEvent::ListenerClosed {listener_id,..}=>{if relay_listener==Some(listener_id) {relay_listener=None;relay_retry=Instant::now();}},
                 SwarmEvent::NewListenAddr {address,..}=>tracing::info!(%address,"mesh listening"),
                 SwarmEvent::ConnectionEstablished {peer_id,connection_id,endpoint,..}=>{connections.insert(connection_id,(peer_id,endpoint.is_relayed()));tracing::info!(peer=%peer_id,relayed=endpoint.is_relayed(),"peer connected");},
@@ -851,7 +890,9 @@ pub async fn run(path: &Path) -> Result<()> {
                 },
                 SwarmEvent::Behaviour(BehaviourEvent::Rpc(rr::Event::Message {peer,message,..}))=>match message {
                     rr::Message::Request {request,channel,..}=>{
-                        let role=membership.snapshot.members.iter().find(|m|m.peer==peer.to_string() && ["client","worker"].contains(&m.role.as_str()) && m.expires>now()).map(|m|m.role.clone());
+                        served+=1;
+                        let name=peer.to_string();
+                        let role=membership.snapshot.members.iter().find(|m|m.peer==name && ["client","worker"].contains(&m.role.as_str()) && m.expires>now()).map(|m|m.role.clone());
                         let Some(role)=role else {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,"Request denied"));continue;};
                         if membership.snapshot.expires<=now() || !allowed.contains(&peer) || !allowed.contains(&me) || !valid_path(&request.path) || request.body.len()>LIMIT {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(403,"Request denied"));continue;}
                         let q=quota.entry(peer).or_insert((Instant::now(),0,0));if q.0.elapsed()>Duration::from_secs(60) {*q=(Instant::now(),0,0);}
@@ -871,8 +912,11 @@ pub async fn run(path: &Path) -> Result<()> {
                         let permit=slots.clone().try_acquire_owned();
                         if let (Some(address),Ok(permit))=(c.worker,permit) {
                             let tx=tx.clone();let http=worker_http.clone();let token=token.clone();let managed=managed.clone();let owners=owners.clone();let meter=meter.clone();
+                            let worker_calls=worker_calls.clone();
                             tokio::spawn(async move {
                                 let _permit=permit;
+                                // Result requests are held open until a token arrives; time frames only.
+                                let called=(request.path=="/v1/qwen/forward").then(Instant::now);
                                 let reply=if request.path.starts_with("/v1/node/") {
                                     if let Some(manager)=managed {
                                         match manager.handle(&request.path,&request.body).await {
@@ -883,6 +927,10 @@ pub async fn run(path: &Path) -> Result<()> {
                                 } else if let Some(manager)=managed {
                                     if manager.ready().await {worker(http,address,token,request).await} else {Reply::error(503,"Worker is not loaded or has an active placement reservation")}
                                 } else {worker(http,address,token,request).await};
+                                if let Some(called)=called {
+                                    worker_calls.0.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+                                    worker_calls.1.fetch_add(called.elapsed().as_micros() as u64,std::sync::atomic::Ordering::Relaxed);
+                                }
                                 if let Some(pending)=pending {owners.lock().unwrap().commit(pending,reply.status,Instant::now());}
                                 if let Some((consumer,sent))=billed && (200..300).contains(&reply.status)
                                     && let Ok(output)=crate::qwen::wire::Frame::header(&reply.body)
@@ -901,7 +949,7 @@ pub async fn run(path: &Path) -> Result<()> {
                 SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event))=>tracing::info!(?event,"relay client event"),
                 SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event))=>tracing::info!(?event,"direct upgrade"),
                 _=>{},
-            }
+            }}
         }
     }
     // Report every metered session, finished or not, so a restart does not forfeit earned credits.

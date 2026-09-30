@@ -21,6 +21,11 @@ pub struct Trace {
     /// consecutive stages show each hop's network time (clocks synchronised by NTP).
     #[serde(default)]
     pub started_ms: f64,
+    /// When this stage's worker received the frame, on the same clock. From the previous
+    /// stage's finish to here is the hop (network and both mesh processes); from here to
+    /// `started_ms` is the wait inside the worker (decode, queue for the engine, rollback).
+    #[serde(default)]
+    pub received_ms: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

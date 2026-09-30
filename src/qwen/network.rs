@@ -616,7 +616,14 @@ fn validate(frame: &Frame, state: &Worker) -> Result<()> {
     Ok(())
 }
 
+fn unix_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
+}
+
 async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
+    let received_ms = unix_ms();
     let frame = match Frame::decode(&bytes).and_then(|f| {
         validate(&f, &state)?;
         Ok(f)
@@ -630,7 +637,7 @@ async fn forward(State(state): State<Worker>, bytes: Bytes) -> Response {
     let calculation = state
         .with_engine(move |resident| {
             let session = frame.header.session.clone();
-            match compute(&worker, resident, frame) {
+            match compute(&worker, resident, frame, received_ms) {
                 Ok(frame) => (Ok(frame), vec![]),
                 Err(error) => {
                     // A failed step leaves this stage's cache in an unknown state.
@@ -693,7 +700,12 @@ async fn discard(state: &Worker, session: &str) {
 }
 
 /// Runs one frame of a session through this stage's layers, starting the session if new.
-fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Frame> {
+fn compute(
+    worker: &Worker,
+    resident: &mut Resident,
+    frame: Frame,
+    received_ms: f64,
+) -> Result<Frame> {
     let h = &frame.header;
     let session = match resident.sessions.get_mut(&h.session) {
         Some(session) => session,
@@ -747,9 +759,7 @@ fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Fra
         None
     };
     let started = Instant::now();
-    let started_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
+    let started_ms = unix_ms();
     let last = h.route.len() == 1;
     let (drafted, mut values) = if last && h.sample && h.speculative {
         let ids = resident
@@ -813,6 +823,7 @@ fn compute(worker: &Worker, resident: &mut Resident, frame: Frame) -> Result<Fra
         end: worker.info.shard.end,
         forward_ms: elapsed,
         started_ms,
+        received_ms,
     });
     header.kind = if header.route.is_empty() {
         Kind::Logits
