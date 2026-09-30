@@ -77,3 +77,21 @@ Published measurements for comparison:
 7. **Partial downloads.** Each peer should download only its own 20–95 GB slice. `scripts/split-gguf.py` now splits a GGUF into per-layer slices with a checksummed manifest; Qwen3.5-397B Q4_K_M was split into 62 slices and verified bit-exact against the original ([model slices](model-slices.md)).
 
 **Suggested milestone:** run Qwen3.5-397B at 3-bit on 2–3 Macs in one city, then repeat across two home networks and record time to first token and decode tokens/s.
+
+## Choosing the order of machines
+
+Run `order` after measuring delays between machines and before assigning stages. It prints the order with the lowest total delay and the cost of the order you gave it.
+
+```
+python3 scripts/route-order.py order fleet.json --fixed-last big-memory-box
+```
+
+Ordering only helps once peers connect directly. Through a relay every order costs the same.
+
+Run `check` before starting a long run. It lists rented machines that end soon and exits with status 1 if there are any.
+
+```
+python3 scripts/route-order.py check fleet.json --min-hours 48
+```
+
+The file format is described at the top of the script.
