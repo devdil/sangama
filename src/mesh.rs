@@ -931,8 +931,13 @@ pub async fn run(path: &Path) -> Result<()> {
                     // restarts, and a failed dial otherwise never tries the circuit.
                     if !swarm.is_connected(&peer) && let Some(relay)=&c.relay {
                         let circuit=relay.clone().with(libp2p::multiaddr::Protocol::P2pCircuit).with(libp2p::multiaddr::Protocol::P2p(peer));
-                        let dial=libp2p::swarm::dial_opts::DialOpts::peer_id(peer).addresses(vec![circuit]).condition(libp2p::swarm::dial_opts::PeerCondition::DisconnectedAndNotDialing);
-                        let _=swarm.dial(if c.force_relay {dial.build()} else {dial.extend_addresses_through_behaviour().build()});
+                        // Only the circuit and the peer's public addresses. The addresses the
+                        // behaviours remember include every address a peer listens on, such as
+                        // 127.0.0.1:9000. Dialled from a machine that runs its own node there, that
+                        // reaches the wrong peer at once and fails the whole dial.
+                        let mut addresses=vec![circuit];
+                        if !c.force_relay && let Some((direct,_))=direct_addresses.get(&peer) {addresses.extend(direct.iter().cloned());}
+                        let _=swarm.dial(libp2p::swarm::dial_opts::DialOpts::peer_id(peer).addresses(addresses).condition(libp2p::swarm::dial_opts::PeerCondition::DisconnectedAndNotDialing).build());
                     }
                     if handover.contains_key(&peer) && !repeatable(&request.path) {held.push((peer,request,result));continue;}
                     let again=repeatable(&request.path).then(||(request.clone(),0));
