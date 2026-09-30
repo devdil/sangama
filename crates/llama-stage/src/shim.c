@@ -151,6 +151,8 @@ int sg_stage_architecture(const sg_stage * s, char * buf, size_t len) {
 }
 
 int sg_stage_n_seq(const sg_stage * s) { return s->n_seq; }
+// The stage's llama.cpp context, for the MTP head (shim_mtp.cpp).
+struct llama_context * sg_stage_context(sg_stage * s) { return s->ctx; }
 
 // Decodes n positions of sequence seq starting at pos. all_logits asks the final stage for
 // every position's logits rather than only the last.

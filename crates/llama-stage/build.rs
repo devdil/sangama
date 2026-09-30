@@ -63,6 +63,17 @@ fn main() {
         .include(source.join("ggml/include"))
         .warnings(true)
         .compile("sangama_llama_shim");
+    // The MTP head uses llama.cpp's C++ staging API (src/llama-ext.h).
+    println!("cargo:rerun-if-changed=src/shim_mtp.cpp");
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .file("src/shim_mtp.cpp")
+        .include(source.join("include"))
+        .include(source.join("ggml/include"))
+        .include(source.join("src"))
+        .warnings(true)
+        .compile("sangama_llama_mtp");
 
     let mut libs = Vec::new();
     for dir in ["lib", "lib64"] {

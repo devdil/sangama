@@ -11,6 +11,14 @@ use std::{
 struct RawStage {
     _private: [u8; 0],
 }
+#[repr(C)]
+struct RawContext {
+    _private: [u8; 0],
+}
+#[repr(C)]
+struct RawMtp {
+    _private: [u8; 0],
+}
 
 unsafe extern "C" {
     fn sg_init(verbose: c_int);
@@ -64,6 +72,33 @@ unsafe extern "C" {
     fn sg_stage_state_save(stage: *mut RawStage, seq: c_int, buf: *mut u8, len: usize) -> usize;
     fn sg_stage_state_load(stage: *mut RawStage, seq: c_int, buf: *const u8, len: usize) -> usize;
     fn sg_stage_clear(stage: *mut RawStage, seq: c_int);
+    fn sg_stage_context(stage: *mut RawStage) -> *mut RawContext;
+    fn sg_mtp_open(
+        target: *mut RawContext,
+        path: *const c_char,
+        n_gpu_layers: c_int,
+        n_ctx: c_int,
+        n_seq: c_int,
+        n_threads: c_int,
+        err: *mut c_char,
+        err_len: usize,
+    ) -> *mut RawMtp;
+    fn sg_mtp_step(
+        mtp: *mut RawMtp,
+        target: *mut RawContext,
+        seq: c_int,
+        tokens: *const i32,
+        keep: c_int,
+        pos: c_int,
+        next: i32,
+        n_draft: c_int,
+        p_min: f32,
+        drafts: *mut i32,
+        err: *mut c_char,
+        err_len: usize,
+    ) -> c_int;
+    fn sg_mtp_clear(mtp: *mut RawMtp, seq: c_int);
+    fn sg_mtp_free(mtp: *mut RawMtp);
     fn sg_stage_free(stage: *mut RawStage);
 }
 
@@ -120,6 +155,8 @@ pub struct Stage {
     embd: usize,
     vocab: usize,
     slots: usize,
+    /// The model's MTP head, on a final stage that drafts tokens.
+    mtp: *mut RawMtp,
 }
 
 // SAFETY: a Stage owns its llama.cpp model and context; &mut self serialises every call.
@@ -170,6 +207,7 @@ impl Stage {
             embd,
             vocab,
             slots,
+            mtp: std::ptr::null_mut(),
         })
     }
 
@@ -368,15 +406,110 @@ impl Stage {
     /// Drops a slot's cache so a new session can start there at position zero.
     pub fn clear(&mut self, slot: usize) {
         if let Ok(seq) = self.seq(slot) {
-            // SAFETY: raw is a live stage and seq is in range.
-            unsafe { sg_stage_clear(self.raw, seq) }
+            // SAFETY: raw is a live stage, mtp is null or live, and seq is in range.
+            unsafe {
+                sg_stage_clear(self.raw, seq);
+                if !self.mtp.is_null() {
+                    sg_mtp_clear(self.mtp, seq);
+                }
+            }
         }
+    }
+
+    /// Loads an MTP-only GGUF of the same model onto this final stage, so it can draft.
+    pub fn attach_mtp(&mut self, path: &Path, options: &Options) -> Result<()> {
+        if !self.is_last() {
+            return Err(Error("only the final stage drafts".into()));
+        }
+        if !self.mtp.is_null() {
+            return Err(Error("an MTP head is already attached".into()));
+        }
+        let path = CString::new(path.to_string_lossy().as_bytes())
+            .map_err(|_| Error("MTP path contains NUL".into()))?;
+        let int = |v: usize| c_int::try_from(v).map_err(|_| Error("parameter too large".into()));
+        let mut err = [0 as c_char; 256];
+        // SAFETY: raw is a live stage; valid path and error buffer.
+        let mtp = unsafe {
+            sg_mtp_open(
+                sg_stage_context(self.raw),
+                path.as_ptr(),
+                if options.gpu { 999 } else { 0 },
+                int(options.context)?,
+                int(self.slots)?,
+                int(options.threads.max(1))?,
+                err.as_mut_ptr(),
+                err.len(),
+            )
+        };
+        if mtp.is_null() {
+            return Err(Error(message(&err)));
+        }
+        self.mtp = mtp;
+        Ok(())
+    }
+
+    pub fn has_mtp(&self) -> bool {
+        !self.mtp.is_null()
+    }
+
+    /// After a forward or greedy call on `slot` from `position`, whose first `inputs.len()`
+    /// input tokens were kept: feed them to the MTP head, then draft up to `n_draft` tokens
+    /// after `next`, keeping each only while the head gives it at least `p_min`.
+    pub fn mtp_step(
+        &mut self,
+        slot: usize,
+        inputs: &[u32],
+        position: usize,
+        next: u32,
+        n_draft: usize,
+        p_min: f32,
+    ) -> Result<Vec<u32>> {
+        if self.mtp.is_null() {
+            return Err(Error("no MTP head attached".into()));
+        }
+        let seq = self.seq(slot)?;
+        let int = |v: usize| c_int::try_from(v).map_err(|_| Error("parameter too large".into()));
+        let tokens: Vec<i32> = inputs
+            .iter()
+            .map(|&t| i32::try_from(t).map_err(|_| Error("token out of range".into())))
+            .collect::<Result<_>>()?;
+        let next = i32::try_from(next).map_err(|_| Error("token out of range".into()))?;
+        let mut drafts = vec![0i32; n_draft];
+        let mut err = [0 as c_char; 256];
+        // SAFETY: live stage and head; buffers match the lengths passed.
+        let n = unsafe {
+            sg_mtp_step(
+                self.mtp,
+                sg_stage_context(self.raw),
+                seq,
+                tokens.as_ptr(),
+                int(tokens.len())?,
+                int(position)?,
+                next,
+                int(n_draft)?,
+                p_min,
+                drafts.as_mut_ptr(),
+                err.as_mut_ptr(),
+                err.len(),
+            )
+        };
+        if n < 0 {
+            return Err(Error(message(&err)));
+        }
+        drafts.truncate(n as usize);
+        Ok(drafts.into_iter().map(|d| d as u32).collect())
     }
 }
 
 impl Drop for Stage {
     fn drop(&mut self) {
-        // SAFETY: raw came from sg_stage_open and is freed once.
-        unsafe { sg_stage_free(self.raw) }
+        // SAFETY: raw came from sg_stage_open and mtp from sg_mtp_open; each is freed once,
+        // the head first because it refers to the stage's context.
+        unsafe {
+            if !self.mtp.is_null() {
+                sg_mtp_free(self.mtp);
+            }
+            sg_stage_free(self.raw)
+        }
     }
 }

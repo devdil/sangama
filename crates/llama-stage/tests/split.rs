@@ -227,3 +227,110 @@ fn first_stage_slots_are_isolated() {
         }
     }
 }
+
+/// Needs SANGAMA_TEST_MTP_TARGET (a Qwen3.5 GGUF without MTP) and SANGAMA_TEST_MTP_GGUF (its
+/// MTP-only GGUF). Two stages decode greedily; the final stage drafts with the MTP head, the
+/// drafts are verified in one pass, and rejected ones are rolled back. The output must equal
+/// plain greedy decoding.
+#[test]
+fn mtp_drafts_keep_greedy_output() {
+    let (Some(target), Some(head)) = (
+        std::env::var_os("SANGAMA_TEST_MTP_TARGET").map(PathBuf::from),
+        std::env::var_os("SANGAMA_TEST_MTP_GGUF").map(PathBuf::from),
+    ) else {
+        return;
+    };
+    let layers = Stage::open(&target, 0, 1, &options()).unwrap().layers();
+    let half = layers / 2;
+    let open = || {
+        let mut last = Stage::open(&target, half, layers, &options()).unwrap();
+        last.attach_mtp(&head, &options()).unwrap();
+        vec![Stage::open(&target, 0, half, &options()).unwrap(), last]
+    };
+    // "Write a Python function that returns the n-th Fibonacci number." in Qwen3.5's chat format,
+    // tokenized by the test's caller would be ideal; any fixed prompt checks equivalence.
+    let prompt: Vec<u32> = std::env::var("SANGAMA_TEST_MTP_PROMPT")
+        .ok()
+        .map(|v| v.split(',').map(|t| t.trim().parse().unwrap()).collect())
+        .unwrap_or_else(|| (1000..1040).collect());
+    let n = 48;
+    let slot = 1;
+    let forward = |stages: &mut [Stage], input: &[u32], position: usize| {
+        let mut values = Vec::new();
+        for stage in stages.iter_mut() {
+            values = stage
+                .forward(slot, input, &values, input.len(), position)
+                .unwrap();
+        }
+        values
+    };
+
+    let mut stages = open();
+    let mut reference = Vec::new();
+    let (mut input, mut position) = (prompt.clone(), 0);
+    while reference.len() < n {
+        let logits = forward(&mut stages, &input, position);
+        position += input.len();
+        let token = argmax(&logits) as u32;
+        reference.push(token);
+        input = vec![token];
+    }
+    drop(stages);
+
+    let mut stages = open();
+    let logits = forward(&mut stages, &prompt, 0);
+    let mut next = argmax(&logits) as u32;
+    let mut out = vec![next];
+    let mut drafts = stages[1].mtp_step(slot, &prompt, 0, next, 4, 0.0).unwrap();
+    let mut position = prompt.len();
+    let (mut drafted, mut accepted) = (0, 0);
+    while out.len() < n {
+        let inputs: Vec<u32> = std::iter::once(next)
+            .chain(drafts.iter().copied())
+            .collect();
+        let snapshots: Vec<Vec<u8>> = stages
+            .iter_mut()
+            .map(|s| s.save_state(slot).unwrap())
+            .collect();
+        let hidden = stages[0]
+            .forward(slot, &inputs, &[], inputs.len(), position)
+            .unwrap();
+        let greedy = stages[1]
+            .greedy(slot, &[], &hidden, inputs.len(), position)
+            .unwrap();
+        let a = drafts
+            .iter()
+            .zip(&greedy)
+            .take_while(|(d, g)| d == g)
+            .count();
+        drafted += drafts.len();
+        accepted += a;
+        out.extend_from_slice(&drafts[..a]);
+        next = greedy[a];
+        out.push(next);
+        let kept = &inputs[..a + 1];
+        let new_drafts = stages[1]
+            .mtp_step(slot, kept, position, next, 4, 0.0)
+            .unwrap();
+        if a < drafts.len() {
+            // Roll both stages back to before the batch and replay the kept inputs.
+            for (stage, snapshot) in stages.iter_mut().zip(&snapshots) {
+                stage.load_state(slot, snapshot).unwrap();
+            }
+            let hidden = stages[0]
+                .forward(slot, kept, &[], kept.len(), position)
+                .unwrap();
+            stages[1]
+                .forward(slot, &[], &hidden, kept.len(), position)
+                .unwrap();
+        }
+        position += a + 1;
+        drafts = new_drafts;
+    }
+    out.truncate(n);
+    eprintln!(
+        "MTP drafts accepted: {accepted} of {drafted} ({:.0}%)",
+        100.0 * accepted as f64 / drafted.max(1) as f64
+    );
+    assert_eq!(out, reference);
+}
