@@ -146,11 +146,14 @@ struct Resident {
     sessions: HashMap<String, Session>,
     load: Load,
 }
-/// How much of the recent time the engine spent computing.
+/// What the final stage knows about its own load, to decide how many tokens to draft.
 struct Load {
     since: Instant,
     busy: Duration,
+    /// Share of recent time the engine spent computing.
     level: f64,
+    /// Share of recent drafts the model accepted.
+    accepted: f64,
 }
 impl Load {
     fn new() -> Self {
@@ -158,6 +161,7 @@ impl Load {
             since: Instant::now(),
             busy: Duration::ZERO,
             level: 0.0,
+            accepted: 0.8,
         }
     }
     /// Counts `busy` computing time and, every fifth of a second, averages the busy share of
@@ -172,22 +176,47 @@ impl Load {
             self.busy = Duration::ZERO;
         }
     }
-}
-/// Drafts to propose when the client asked for `wanted`. Checking a draft costs every stage a
-/// position. That pays while a pass is mostly network and fixed cost, and loses once the
-/// device is busy, where a position spent on another request's token is never wasted.
-/// `SANGAMA_MTP_LOAD=0` always drafts what the client asked for.
-fn drafts_under_load(wanted: usize, level: f64) -> usize {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*ON.get_or_init(|| std::env::var("SANGAMA_MTP_LOAD").map_or(true, |v| v != "0")) {
-        return wanted;
-    }
-    if level > 0.85 {
-        0
-    } else if level > 0.65 {
-        wanted.min(2)
-    } else {
-        wanted
+    /// Drafts to propose to a session that asked for `wanted`: the number that gives the
+    /// most tokens per second. `call` is how long the device call took for `positions`
+    /// positions of `frames` decoding sessions, `period` how long since this session's last
+    /// step finished here, and `stages` the route's length.
+    ///
+    /// A pass costs the time outside the engines, which drafts do not change, plus each
+    /// stage's compute, which grows with every position: measured on 96 GB cards, a call
+    /// takes as long as 3.5 extra positions before its first. With K drafts a pass yields
+    /// 1 + p + ... + p^K tokens at acceptance p. Far-apart stages therefore draft a lot,
+    /// and busy stages in one room draft little or nothing.
+    fn drafts(
+        &self,
+        wanted: usize,
+        call: Duration,
+        positions: usize,
+        frames: usize,
+        period: Duration,
+        stages: usize,
+    ) -> usize {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var("SANGAMA_MTP_LOAD").map_or(true, |v| v != "0")) {
+            return wanted;
+        }
+        const FIXED: f64 = 3.5;
+        let stages = stages as f64;
+        let call = call.as_secs_f64();
+        let per_position = call / (FIXED + positions as f64);
+        // A saturated engine has no time outside the engines to spare: what looks like it
+        // is frames waiting their turn, and that grows with every position too.
+        let outside = if self.level > 0.9 {
+            0.0
+        } else {
+            (period.as_secs_f64() - stages * call).max(0.0)
+        };
+        let p = self.accepted.clamp(0.05, 0.98);
+        let rate = |k: usize| {
+            let tokens = (1.0 - p.powi(k as i32 + 1)) / (1.0 - p);
+            let pass = outside + stages * per_position * (FIXED + (frames.max(1) * (1 + k)) as f64);
+            tokens / pass.max(1e-6)
+        };
+        (0..=wanted).fold(0, |best, k| if rate(k) > rate(best) { k } else { best })
     }
 }
 impl Resident {
@@ -918,6 +947,8 @@ fn compute_batch(
     frames: Vec<(Frame, f64)>,
 ) -> Vec<Result<Frame>> {
     let last = worker.info.shard.index + 1 == worker.manifest.shards.len();
+    // The route's length where this is its final stage, which is the one that drafts.
+    let stages = last.then_some(worker.manifest.shards.len());
     let mut results: Vec<Option<Result<Frame>>> = frames.iter().map(|_| None).collect();
     // Index into `frames`, slot, undo note.
     let mut ready: Vec<(usize, usize, Option<Draft>)> = Vec::new();
@@ -984,7 +1015,10 @@ fn compute_batch(
             .iter()
             .flat_map(|&k| frames[ready[k].0].0.values.iter().copied())
             .collect();
-        match resident.model.forward_many(&items, &tokens, &values) {
+        let began = Instant::now();
+        let many = resident.model.forward_many(&items, &tokens, &values);
+        let call = began.elapsed();
+        match many {
             Ok(many) => {
                 let mut row = 0;
                 let mut computed: Vec<(usize, usize, Output)> = vec![];
@@ -1015,7 +1049,7 @@ fn compute_batch(
                         (&frames[ready[*k].0].0.header, ready[*k].1, *row, output)
                     })
                     .collect();
-                match draft_after(resident, last, &headers) {
+                match draft_after(resident, stages, call, &headers) {
                     Ok(mut proposed) => {
                         for (n, (k, _, output)) in computed.into_iter().enumerate() {
                             drafts[k] = std::mem::take(&mut proposed[n]);
@@ -1044,6 +1078,7 @@ fn compute_batch(
         }
         let (frame, _) = &frames[*index];
         let h = &frame.header;
+        let began = Instant::now();
         let computed = if last && h.sample && h.speculative {
             resident
                 .model
@@ -1055,8 +1090,9 @@ fn compute_batch(
                 .forward(*slot, &h.tokens, &frame.values, h.seq_len, h.position)
                 .map(Output::Values)
         };
+        let call = began.elapsed();
         outputs[k] = Some(computed.and_then(|output| {
-            drafts[k] = draft_after(resident, last, &[(h, *slot, 0, &output)])?.remove(0);
+            drafts[k] = draft_after(resident, stages, call, &[(h, *slot, 0, &output)])?.remove(0);
             Ok(output)
         }));
     }
@@ -1110,17 +1146,23 @@ fn compute_batch(
 /// The final stage's MTP head sees every kept position of each frame, then drafts after the
 /// token the model chose: the drafts it verified up to the first rejection, then its own
 /// token. It reads the hidden states of the device call the frames shared; each entry is a
-/// frame's header, slot, first row in that call and output, in increasing slot order.
+/// frame's header, slot, first row in that call and output, in increasing slot order. `call`
+/// is how long that device call took and `stages` the route's length, on its final stage.
 fn draft_after(
     resident: &mut Resident,
-    last: bool,
+    stages: Option<usize>,
+    call: Duration,
     frames: &[(&Header, usize, usize, &Output)],
 ) -> Result<Vec<Vec<u32>>> {
     let mut proposed: Vec<Vec<u32>> = frames.iter().map(|_| vec![]).collect();
-    if !last || !resident.model.has_mtp() {
+    let Some(stages) = stages.filter(|_| resident.model.has_mtp()) else {
         return Ok(proposed);
-    }
-    let level = resident.load.level;
+    };
+    let positions: usize = frames.iter().map(|(h, ..)| h.seq_len).sum();
+    let decoding = frames
+        .iter()
+        .filter(|(h, ..)| h.seq_len <= 1 + MAX_DRAFTS)
+        .count();
     let (mut steps, mut owners) = (vec![], vec![]);
     for (n, (h, slot, row, output)) in frames.iter().enumerate() {
         if h.inputs.is_empty() {
@@ -1133,13 +1175,21 @@ fn draft_after(
                     .zip(ids)
                     .take_while(|(draft, model)| draft == model)
                     .count();
+                let share = accepted as f64 / (h.seq_len - 1) as f64;
+                resident.load.accepted = 0.95 * resident.load.accepted + 0.05 * share;
                 (accepted + 1, ids[accepted])
             }
             Output::Tokens(ids) => (h.seq_len, ids[0]),
             Output::Values(values) => (h.seq_len, argmax(values) as u32),
         };
-        let wanted = if h.sample {
-            drafts_under_load(h.mtp_drafts, level)
+        let wanted = if h.sample && h.mtp_drafts > 0 {
+            let period = resident
+                .sessions
+                .get(&h.session)
+                .map_or(Duration::ZERO, |s| s.used.elapsed());
+            resident
+                .load
+                .drafts(h.mtp_drafts, call, positions, decoding, period, stages)
         } else {
             0
         };
@@ -1315,5 +1365,27 @@ async fn result(State(state): State<Worker>, Json(request): Json<Collect>) -> Re
             StatusCode::GATEWAY_TIMEOUT,
             "no result from the last stage; a stage or hop on the route failed",
         ),
+    }
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+
+    #[test]
+    fn drafts_follow_where_a_pass_spends_its_time() {
+        let ms = Duration::from_millis;
+        let mut load = Load::new();
+        // One request across three far-apart stages: the network dominates, so draft fully.
+        assert_eq!(load.drafts(4, ms(5), 1, 1, ms(100), 3), 4);
+        // One request in one room: the first position of a call is the dear one.
+        assert_eq!(load.drafts(4, ms(5), 1, 1, ms(20), 3), 4);
+        // A saturated engine: every draft takes a position from another request's token.
+        load.level = 0.95;
+        assert_eq!(load.drafts(4, ms(20), 16, 16, ms(60), 3), 0);
+        // Drafts that are rarely right are not worth a position anywhere busy.
+        load.level = 0.5;
+        load.accepted = 0.2;
+        assert!(load.drafts(8, ms(20), 16, 16, ms(70), 3) <= 1);
     }
 }
