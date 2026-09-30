@@ -759,6 +759,8 @@ pub async fn run(path: &Path) -> Result<()> {
     let mut offers: HashMap<PeerId, crate::mesh_store::Offer> = HashMap::new();
     let mut standing: Option<SignedStanding> = None;
     let mut connections: HashMap<libp2p::swarm::ConnectionId, (PeerId, bool)> = HashMap::new();
+    // Public addresses admitted peers advertise, and when each was last dialled directly.
+    let mut direct_addresses: HashMap<PeerId, (Vec<Multiaddr>, Option<Instant>)> = HashMap::new();
     let mut search_tick = tokio::time::interval(Duration::from_secs(10));
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     // Load of this event loop, which handles every request of every session in turn.
@@ -793,6 +795,14 @@ pub async fn run(path: &Path) -> Result<()> {
                 // the direct one is lost. Peers with calls in flight are left for a later tick.
                 if !c.force_relay {
                     let direct:HashSet<PeerId>=connections.values().filter(|(_,relayed)|!relayed).map(|(p,_)|*p).collect();
+                    // Hole punching only uses addresses other peers observed. A peer that
+                    // advertises a reachable public address is dialled there directly.
+                    for (p,(addresses,tried)) in direct_addresses.iter_mut() {
+                        if allowed.contains(p) && !direct.contains(p) && swarm.is_connected(p) && tried.is_none_or(|t|t.elapsed()>Duration::from_secs(30)) {
+                            *tried=Some(Instant::now());
+                            let _=swarm.dial(libp2p::swarm::dial_opts::DialOpts::peer_id(*p).addresses(addresses.clone()).condition(libp2p::swarm::dial_opts::PeerCondition::NotDialing).build());
+                        }
+                    }
                     let relayed:Vec<(libp2p::swarm::ConnectionId,PeerId)>=connections.iter().filter(|(_,(p,relayed))|*relayed && direct.contains(p)).map(|(id,(p,_))|(*id,*p)).collect();
                     for (id,p) in relayed {
                         if !pending.values().any(|(q,_)|*q==p) && swarm.close_connection(id) {tracing::info!(peer=%p,"direct connection established; closed the relayed one");}
@@ -827,6 +837,7 @@ pub async fn run(path: &Path) -> Result<()> {
                 }
                 pending.retain(|_,(p,result)| {if !allowed.contains(p) {false} else {!result.is_closed()}});
                 quota.retain(|p,_|allowed.contains(p));
+                direct_addresses.retain(|p,_|allowed.contains(p));
                 ad_quota.retain(|p,_|allowed.contains(p));
                 offers.retain(|p,o|allowed.contains(p) && o.expires>now());
             },
@@ -871,7 +882,9 @@ pub async fn run(path: &Path) -> Result<()> {
                 SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {peer_id,info,..}))=>{
                     // Only admitted identities influence dial addresses. Forced-relay tests suppress direct upgrades.
                     if allowed.contains(&peer_id) && !c.force_relay {
-                        for address in info.listen_addrs.into_iter().take(8) {if safe_direct(&address) {swarm.add_peer_address(peer_id,address);}}
+                        let public:Vec<Multiaddr>=info.listen_addrs.into_iter().take(8).filter(safe_direct).collect();
+                        for address in &public {swarm.add_peer_address(peer_id,address.clone());}
+                        if !public.is_empty() {direct_addresses.entry(peer_id).or_insert((vec![],None)).0=public;}
                         if Some(peer_id)==relay_peer {swarm.add_external_address(info.observed_addr);}
                     }
                 },
