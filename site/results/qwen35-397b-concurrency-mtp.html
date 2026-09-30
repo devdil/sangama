@@ -23,10 +23,11 @@ th { background: #eee; }
 <h1>Qwen3.5-397B: many requests at once, and drafted tokens</h1>
 <p><i>30 September 2026</i></p>
 
-<p>The <a href="/results/qwen35-397b.html">previous test</a> ran Qwen3.5-397B across 20 rented GPUs with 16 GB each, every connection through a relay. It served one request at a time, and the GPUs sat almost idle. This test asks two questions about the same pipeline:</p>
+<p>The <a href="/results/qwen35-397b.html">previous test</a> ran Qwen3.5-397B across 20 rented GPUs with 16 GB each, every connection through a relay. It served one request at a time, and the GPUs sat almost idle. This test asks three questions about the same pipeline:</p>
 <ol>
 <li>How much can it serve when many people use it at once?</li>
 <li>How much faster is one request when the model guesses several tokens ahead?</li>
+<li>Do the two combine?</li>
 </ol>
 
 <p><b>Result:</b></p>
@@ -98,6 +99,22 @@ th { background: #eee; }
 <li><b>A 4-bit draft layer is enough.</b> An 8-bit copy was accepted no more often.</li>
 <li><b>The published model file leaves the draft layer out.</b> We converted it from the original release (5.7 GB). The last machine needs about 19.5 GB with it.</li>
 </ul>
+
+<h2>Both together</h2>
+
+<p>Many requests at once, each with 4 guesses per step:</p>
+
+<div class="wide">
+<table>
+<tr><th>Requests at once</th><th>Total tokens per second, no guesses</th><th>With guesses</th></tr>
+<tr><td>16</td><td>21.7</td><td><b>38.9</b></td></tr>
+<tr><td>32</td><td>57.1</td><td>49.9</td></tr>
+<tr><td>32, repeated</td><td>56.5</td><td>59.6</td></tr>
+<tr><td>48</td><td>51.3</td><td><b>83.1</b></td></tr>
+</table>
+</div>
+
+<p>Every request completed, and 56% of guesses were accepted, the same as for one request. But the gain is not consistent: 1.8&times; at 16 requests, 1.6&times; at 48, and none at 32. Each figure is a single run, and plain runs on these shared rented machines varied by as much between runs. We need more repeats before quoting a speed-up under load.</p>
 
 <h2>A correction: the output depends on batching</h2>
 

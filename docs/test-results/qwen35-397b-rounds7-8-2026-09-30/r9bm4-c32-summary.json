@@ -1,0 +1,1 @@
+{"prefix": "r9bm4", "concurrency": 32, "ok": 32, "failed": 0, "wall_s": 93.2, "tokens": 4096, "aggregate_tps": 43.95, "steady_tps": 59.6, "stream_tps_p50": 1.74, "stream_tps_p5": 1.61, "ttft_s_p50": 7.61, "ttft_s_p95": 8.94, "identical_to_solo": "8/32", "mtp": 4, "tokens_per_pass": 3.16, "drafts_accepted": "2800/4960"}
