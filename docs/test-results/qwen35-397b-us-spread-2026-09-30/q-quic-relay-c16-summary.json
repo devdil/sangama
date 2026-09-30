@@ -1,0 +1,1 @@
+{"prefix": "q-quic-relay", "concurrency": 16, "ok": 16, "failed": 0, "wall_s": 18.5, "tokens": 2048, "aggregate_tps": 110.45, "steady_tps": 129.2, "stream_tps_p50": 8.08, "stream_tps_p5": 7.95, "ttft_s_p50": 0.35, "ttft_s_p95": 0.38, "identical_to_solo": "7/16", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

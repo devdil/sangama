@@ -1,0 +1,1 @@
+{"prefix": "q-quic-direct", "concurrency": 48, "ok": 48, "failed": 0, "wall_s": 25.1, "tokens": 6144, "aggregate_tps": 245.18, "steady_tps": 312.0, "stream_tps_p50": 6.46, "stream_tps_p5": 6.17, "ttft_s_p50": 0.42, "ttft_s_p95": 0.64, "identical_to_solo": "20/48", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

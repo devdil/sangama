@@ -1,0 +1,1 @@
+{"prefix": "q2-tcp-direct", "concurrency": 48, "ok": 48, "failed": 0, "wall_s": 24.9, "tokens": 6144, "aggregate_tps": 246.93, "steady_tps": 314.0, "stream_tps_p50": 6.46, "stream_tps_p5": 6.25, "ttft_s_p50": 0.44, "ttft_s_p95": 0.83, "identical_to_solo": "22/48", "mtp": 0, "tokens_per_pass": 1.0, "drafts_accepted": "0/0"}

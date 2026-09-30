@@ -1,0 +1,22 @@
+[
+ {
+  "name": "relay",
+  "gpu": "RTX 4070",
+  "geo": "Colorado, US"
+ },
+ {
+  "name": "w00",
+  "gpu": "RTX PRO 6000 Max-Q",
+  "geo": "Maryland, US"
+ },
+ {
+  "name": "w01",
+  "gpu": "RTX PRO 6000 WS",
+  "geo": "Utah, US"
+ },
+ {
+  "name": "w02",
+  "gpu": "RTX PRO 6000 S",
+  "geo": "Texas, US"
+ }
+]

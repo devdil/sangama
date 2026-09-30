@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3.5-397B across three US states: relay or direct, TCP or QUIC - Sangama</title>
+<meta name="description" content="Three stages in Maryland, Utah and Texas: direct connections make one request 17% faster than going through a relay; QUIC matches TCP in speed and halves the wait for the first token.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+body { max-width: 760px; margin: 0 auto; padding: 16px; font-family: Georgia, "Times New Roman", serif; line-height: 1.5; color: #000; background: #fff; }
+pre { font-size: 13px; overflow-x: auto; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: #eee; }
+.small { font-size: 90%; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">Sangama</a> &rarr; <a href="/results/">Results</a></p>
+
+<h1>Qwen3.5-397B across three US states</h1>
+<p><i>30 September 2026, round 13</i></p>
+
+<p>Our earlier three-stage tests kept every machine in one datacenter. This one puts real distance between them, to measure two things we had built but not tested where they matter: connecting machines directly instead of through a relay, and QUIC as the transport instead of TCP.</p>
+
+<p><b>Result:</b></p>
+<ul>
+<li><b>Direct connections:</b> one request ran 17% faster, 8.9 to 10.4 tokens per second.</li>
+<li><b>QUIC:</b> the same speed as TCP on these links, but the first token arrived in about 0.3 seconds instead of 0.55.</li>
+</ul>
+
+<hr>
+
+<h2>Setup</h2>
+<table>
+<tr><th>Model</th><td>Qwen3.5-397B-A17B, 4-bit, 3 stages of 20 layers</td></tr>
+<tr><th>Stages</th><td>96 GB GPUs in Maryland, Utah and Texas</td></tr>
+<tr><th>Relay and client</th><td>One machine in Colorado</td></tr>
+<tr><th>Settings</th><td>48 sessions per machine, shared steps, no guessing</td></tr>
+<tr><th>Cost</th><td>About $4.90 an hour</td></tr>
+</table>
+
+<p>Round trips between the machines: relay to Maryland 43 ms, relay to Utah and to Texas 26 ms each, Maryland to Utah 60 ms, Utah to Texas 34 ms.</p>
+
+<h2>Numbers</h2>
+
+<div class="wide">
+<table>
+<tr><th>Mode</th><th>One request</th><th>Network per trip</th><th>First token</th><th>16 requests</th><th>48 requests</th></tr>
+<tr><td>TCP through the relay</td><td>8.8-8.9</td><td>98.6 ms</td><td>0.40-0.45 s</td><td>113</td><td>225</td></tr>
+<tr><td>QUIC through the relay</td><td>8.7-8.8</td><td>96-97 ms</td><td>0.33-0.46 s</td><td>110</td><td>203</td></tr>
+<tr><td>TCP direct</td><td>10.3-10.4</td><td>82.6 ms</td><td>0.55 s</td><td>127</td><td>247</td></tr>
+<tr><td>QUIC direct</td><td><b>10.4-10.5</b></td><td><b>81.4 ms</b></td><td><b>0.28-0.31 s</b></td><td><b>128-129</b></td><td>243-245</td></tr>
+</table>
+</div>
+
+<p class="small">Tokens per second. The 16 and 48 request columns count tokens over the whole run. GPU computing was 14 ms per trip in every mode. Single runs, except the two direct modes under load, which were run twice.</p>
+
+<ul>
+<li><b>Direct connections save what the map says they should.</b> From the round trips above, a trip through the relay should spend about 95 ms on the network and a direct one about 82 ms. We measured 98.6 and 82.6.</li>
+<li><b>QUIC does not speed up a healthy link.</b> These are datacenter links that rarely lose packets. QUIC is meant to help where packets are lost, since over TCP one lost packet holds up every request on that connection, and where home routers need hole punching to connect at all. Neither applies here.</li>
+<li><b>QUIC does start faster.</b> The first token came in about 0.3 seconds over direct QUIC against 0.55 over direct TCP.</li>
+<li><b>Distance is the limit again.</b> The same three stages in one datacenter ran one request at 48 to 50 tokens per second. Spread over three states they run at 9 to 10, and the network is 85% of each trip.</li>
+</ul>
+
+<h2>What the testing caught</h2>
+<ul>
+<li><b>A slow run on direct TCP.</b> The first run under load gave 78 and 184 where the repeat gave 127 and 247. Some machines still had a relayed connection open next to the direct one, and requests alternate between the two. We only close the relayed one when nothing is in flight, which under steady load may be never. That needs fixing.</li>
+<li><b>A machine that could not call its own public address.</b> The client runs on the relay machine and now reaches the relay locally.</li>
+<li><b>A rented machine that never started</b>, replaced before the test.</li>
+</ul>
+
+<h2>Next</h2>
+<ul>
+<li><b>Close the relayed connection as soon as the direct one works</b>, even under load.</li>
+<li><b>Test where QUIC should matter:</b> links with packet loss, and two real home networks.</li>
+</ul>
+
+<p>Full report and raw data: <a href="https://github.com/devdil/sangama/blob/main/docs/test-results/qwen35-397b-us-spread-2026-09-30.md">docs/test-results</a>.</p>
+
+<hr>
+<p class="small"><a href="/">Sangama</a> is open source under the MIT License. Contact: <a href="mailto:hello@sangama.co">hello@sangama.co</a> &middot; <a href="https://discord.gg/uYGxZ2f3d">Discord</a></p>
+
+</body>
+</html>
