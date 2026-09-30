@@ -123,12 +123,26 @@ enum Command {
         peer: PeerId,
         channel: rr::ResponseChannel<Reply>,
         reply: Reply,
+        /// Whether this request was counted as being served for its peer (see `repeatable`).
+        counted: bool,
     },
     Membership(SignedSnapshot),
     Offer(crate::qwen::network::Info),
     Standing(Option<SignedStanding>),
     Discover(oneshot::Sender<Reply>),
     Status(PeerId, oneshot::Sender<Reply>),
+}
+/// A call in flight: its peer, where the reply goes and, for a call that is safe to send
+/// again, the request and how often it has been re-sent.
+struct Pending {
+    peer: PeerId,
+    result: oneshot::Sender<Reply>,
+    again: Option<(Request, u8)>,
+}
+/// Reads and waits change nothing at the worker, so they can be sent again if a connection
+/// closes under them. Frames, reservations and resets cannot.
+fn repeatable(path: &str) -> bool {
+    path.ends_with("/info") || path.ends_with("/capacity") || path.ends_with("/result")
 }
 #[derive(Clone)]
 struct Proxy {
@@ -767,8 +781,17 @@ pub async fn run(path: &Path) -> Result<()> {
             .map(|b| Ok((b.listen, b.peer.parse()?)))
             .collect::<Result<_>>()?,
     )));
-    let mut pending: HashMap<rr::OutboundRequestId, (PeerId, oneshot::Sender<Reply>)> =
-        HashMap::new();
+    let mut pending: HashMap<rr::OutboundRequestId, Pending> = HashMap::new();
+    // Moving a peer from its relayed connection to a direct one. Requests go out over every
+    // connection to a peer in turn, so while both exist the relayed one must be retired: both
+    // sides hold new frames for the peer, those in flight finish, the peer with the smaller
+    // id closes the relayed connection, and the held frames then go out directly.
+    let mut handover: HashMap<PeerId, Instant> = HashMap::new();
+    let mut handover_retry: HashMap<PeerId, Instant> = HashMap::new();
+    let mut held: Vec<(PeerId, Request, oneshot::Sender<Reply>)> = Vec::new();
+    let mut serving: HashMap<PeerId, usize> = HashMap::new();
+    let mut handover_tick = tokio::time::interval(Duration::from_millis(50));
+    handover_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut quota: HashMap<PeerId, (Instant, usize, usize)> = HashMap::new();
     let mut ad_quota: HashMap<PeerId, (Instant, usize)> = HashMap::new();
     let mut offers: HashMap<PeerId, crate::mesh_store::Offer> = HashMap::new();
@@ -818,9 +841,9 @@ pub async fn run(path: &Path) -> Result<()> {
                             let _=swarm.dial(libp2p::swarm::dial_opts::DialOpts::peer_id(*p).addresses(addresses.clone()).condition(libp2p::swarm::dial_opts::PeerCondition::NotDialing).build());
                         }
                     }
-                    let relayed:Vec<(libp2p::swarm::ConnectionId,PeerId)>=connections.iter().filter(|(_,(p,relayed))|*relayed && direct.contains(p)).map(|(id,(p,_))|(*id,*p)).collect();
-                    for (id,p) in relayed {
-                        if !pending.values().any(|(q,_)|*q==p) && swarm.close_connection(id) {tracing::info!(peer=%p,"direct connection established; closed the relayed one");}
+                    let both:HashSet<PeerId>=connections.values().filter(|(p,relayed)|*relayed && direct.contains(p)).map(|(p,_)|*p).collect();
+                    for p in both {
+                        if !handover.contains_key(&p) && handover_retry.get(&p).is_none_or(|t|t.elapsed()>Duration::from_secs(30)) {handover.insert(p,Instant::now());}
                     }
                 }
                 if reported.elapsed()>=Duration::from_secs(10) {
@@ -850,11 +873,39 @@ pub async fn run(path: &Path) -> Result<()> {
                         relay_retry=Instant::now();
                         relay_listener=swarm.listen_on(address.clone().with(libp2p::multiaddr::Protocol::P2pCircuit)).ok();
                 }
-                pending.retain(|_,(p,result)| {if !allowed.contains(p) {false} else {!result.is_closed()}});
+                pending.retain(|_,call|allowed.contains(&call.peer) && !call.result.is_closed());
                 quota.retain(|p,_|allowed.contains(p));
                 direct_addresses.retain(|p,_|allowed.contains(p));
                 ad_quota.retain(|p,_|allowed.contains(p));
                 offers.retain(|p,o|allowed.contains(p) && o.expires>now());
+            },
+            _=handover_tick.tick(), if !handover.is_empty()=>{
+                woke=Instant::now();
+                let peers:Vec<(PeerId,Instant)>=handover.iter().map(|(p,t)|(*p,*t)).collect();
+                for (p,started) in peers {
+                    let direct=connections.values().any(|(q,relayed)|*q==p && !*relayed);
+                    let relayed:Vec<libp2p::swarm::ConnectionId>=connections.iter().filter(|(_,(q,relayed))|*q==p && *relayed).map(|(id,_)|*id).collect();
+                    let mut done=!direct || relayed.is_empty();
+                    if !done && me<p
+                        && !pending.values().any(|call|call.peer==p && call.again.is_none())
+                        && serving.get(&p).copied().unwrap_or(0)==0 {
+                        for id in relayed {swarm.close_connection(id);}
+                        tracing::info!(peer=%p,"direct connection established; closed the relayed one");
+                    }
+                    if !done && started.elapsed()>Duration::from_secs(3) {
+                        // Frames kept flowing or the peer did not close; carry on and try later.
+                        done=true;handover_retry.insert(p,Instant::now());
+                        tracing::warn!(peer=%p,"could not retire the relayed connection; both stay in use");
+                    }
+                    if done {
+                        handover.remove(&p);
+                        let (release,keep):(Vec<_>,Vec<_>)=std::mem::take(&mut held).into_iter().partition(|(q,_,_)|*q==p);
+                        held=keep;
+                        for (peer,request,result) in release {
+                            let id=swarm.behaviour_mut().rpc.send_request(&peer,request);pending.insert(id,Pending {peer,result,again:None});
+                        }
+                    }
+                }
             },
             Some(command)=rx.recv()=>{woke=Instant::now();match command {
                 Command::Status(peer,result)=>{
@@ -883,9 +934,12 @@ pub async fn run(path: &Path) -> Result<()> {
                         let dial=libp2p::swarm::dial_opts::DialOpts::peer_id(peer).addresses(vec![circuit]).condition(libp2p::swarm::dial_opts::PeerCondition::DisconnectedAndNotDialing);
                         let _=swarm.dial(if c.force_relay {dial.build()} else {dial.extend_addresses_through_behaviour().build()});
                     }
-                    let id=swarm.behaviour_mut().rpc.send_request(&peer,request);pending.insert(id,(peer,result));
+                    if handover.contains_key(&peer) && !repeatable(&request.path) {held.push((peer,request,result));continue;}
+                    let again=repeatable(&request.path).then(||(request.clone(),0));
+                    let id=swarm.behaviour_mut().rpc.send_request(&peer,request);pending.insert(id,Pending {peer,result,again});
                 },
-                Command::Reply {peer,channel,mut reply}=>{
+                Command::Reply {peer,channel,mut reply,counted}=>{
+                    if counted && let Some(n)=serving.get_mut(&peer) {*n=n.saturating_sub(1);}
                     if let Some(q)=quota.get_mut(&peer) {q.2=q.2.saturating_add(reply.body.len());if q.2>PEER_BYTES_PER_MINUTE {reply=Reply::error(429,"Peer byte quota exceeded");}}
                     let reply=if membership.snapshot.expires>now() && allowed.contains(&peer) && allowed.contains(&me) {reply} else {Reply::error(403,"Membership expired")};let _=swarm.behaviour_mut().rpc.send_response(channel,reply);},
             }},
@@ -939,6 +993,8 @@ pub async fn run(path: &Path) -> Result<()> {
                         };
                         let permit=slots.clone().try_acquire_owned();
                         if let (Some(address),Ok(permit))=(c.worker,permit) {
+                            let counted=!repeatable(&request.path);
+                            if counted {*serving.entry(peer).or_insert(0)+=1;}
                             let tx=tx.clone();let http=worker_http.clone();let token=token.clone();let managed=managed.clone();let owners=owners.clone();let meter=meter.clone();
                             let worker_calls=worker_calls.clone();
                             tokio::spawn(async move {
@@ -966,13 +1022,23 @@ pub async fn run(path: &Path) -> Result<()> {
                                     && let Some(own)=output.trace.get(sent.trace.len()) {
                                     meter.lock().unwrap().record_work(&sent.session,consumer,&sent.model_hash,(own.start as u32,own.end as u32),sent.seq_len as u64,Instant::now());
                                 }
-                                let _=tx.send(Command::Reply {peer,channel,reply}).await;
+                                let _=tx.send(Command::Reply {peer,channel,reply,counted}).await;
                             });
                         } else {let _=swarm.behaviour_mut().rpc.send_response(channel,Reply::error(503,"No available worker"));}
                     },
-                    rr::Message::Response {request_id,response}=>{if let Some((p,result))=pending.remove(&request_id) {let _=result.send(if allowed.contains(&p) && membership.snapshot.expires>now() {response} else {Reply::error(403,"Membership expired")});}},
+                    rr::Message::Response {request_id,response}=>{if let Some(call)=pending.remove(&request_id) {let _=call.result.send(if allowed.contains(&call.peer) && membership.snapshot.expires>now() {response} else {Reply::error(403,"Membership expired")});}},
                 },
-                SwarmEvent::Behaviour(BehaviourEvent::Rpc(rr::Event::OutboundFailure {request_id,error,..}))=>{if let Some((_,result))=pending.remove(&request_id) {let _=result.send(Reply::error(503,"Peer disconnected or unavailable"));}tracing::warn!(%error,"peer request failed");},
+                SwarmEvent::Behaviour(BehaviourEvent::Rpc(rr::Event::OutboundFailure {request_id,error,..}))=>{
+                    match pending.remove(&request_id) {
+                        // A read or wait lost with its connection goes out again on another.
+                        Some(Pending {peer,result,again:Some((request,tries))}) if tries<2 && swarm.is_connected(&peer) && !result.is_closed()=>{
+                            let id=swarm.behaviour_mut().rpc.send_request(&peer,request.clone());
+                            pending.insert(id,Pending {peer,result,again:Some((request,tries+1))});
+                        },
+                        Some(call)=>{let _=call.result.send(Reply::error(503,"Peer disconnected or unavailable"));tracing::warn!(%error,"peer request failed");},
+                        None=>tracing::warn!(%error,"peer request failed"),
+                    }
+                },
                 SwarmEvent::Behaviour(BehaviourEvent::RelayServer(event))=>tracing::debug!(?event,"relay event"),
                 SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event))=>tracing::info!(?event,"relay client event"),
                 SwarmEvent::Behaviour(BehaviourEvent::Dcutr(event))=>tracing::info!(?event,"direct upgrade"),
