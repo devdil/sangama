@@ -523,3 +523,122 @@ fn batched_mtp_drafts_match_solo_drafts() {
     }
     assert_eq!(together, solo);
 }
+
+/// Needs SANGAMA_TEST_MTP_TARGET and SANGAMA_TEST_MTP_GGUF. Three sessions share every device
+/// call while each verifies a different number of drafts per step (0, 2 and 4, rotating), as
+/// happens when the final stage chooses the draft count per session. Rejected drafts are
+/// rolled back on the device. Each session must produce what it produces alone.
+#[test]
+fn batched_sessions_with_unequal_drafts_match_solo_generation() {
+    use sangama_llama_stage::{Batched, MtpStep};
+    let (Some(target), Some(head)) = (
+        std::env::var_os("SANGAMA_TEST_MTP_TARGET").map(PathBuf::from),
+        std::env::var_os("SANGAMA_TEST_MTP_GGUF").map(PathBuf::from),
+    ) else {
+        return;
+    };
+    let layers = Stage::open(&target, 0, 1, &options()).unwrap().layers();
+    let half = layers / 2;
+    let mut last = Stage::open(&target, half, layers, &options()).unwrap();
+    last.attach_mtp(&head, &options()).unwrap();
+    let mut stages = vec![Stage::open(&target, 0, half, &options()).unwrap(), last];
+    let prompts: Vec<Vec<u32>> = vec![
+        (1000..1024).collect(),
+        (5000..5017).collect(),
+        (9000..9031).collect(),
+    ];
+    let n = 40;
+    // Alone, without drafts: slot 3.
+    let mut solo = Vec::new();
+    for p in &prompts {
+        for stage in &mut stages {
+            stage.clear(3);
+        }
+        let (mut input, mut position, mut out) = (p.clone(), 0, Vec::new());
+        while out.len() < n {
+            let hidden = stages[0]
+                .forward(3, &input, &[], input.len(), position)
+                .unwrap();
+            let logits = stages[1]
+                .forward(3, &[], &hidden, input.len(), position)
+                .unwrap();
+            position += input.len();
+            let token = argmax(&logits) as u32;
+            out.push(token);
+            input = vec![token];
+        }
+        solo.push(out);
+    }
+    // Together: slots 0-2.
+    let count = prompts.len();
+    let mut inputs = prompts.clone();
+    let mut positions = vec![0usize; count];
+    let mut outs: Vec<Vec<u32>> = vec![Vec::new(); count];
+    let mut step = 0;
+    while outs.iter().any(|o| o.len() < n) {
+        let items: Vec<(usize, usize, usize)> = (0..count)
+            .map(|k| (k, inputs[k].len(), positions[k]))
+            .collect();
+        let tokens: Vec<u32> = inputs.iter().flatten().copied().collect();
+        let Batched::Hidden(hidden) = stages[0].forward_many(&items, &tokens, &[]).unwrap() else {
+            panic!("first stage returned tokens");
+        };
+        let Batched::Tokens(ids) = stages[1].forward_many(&items, &[], &hidden).unwrap() else {
+            panic!("final stage returned hidden states");
+        };
+        let mut row = 0;
+        let mut kept: Vec<usize> = Vec::new();
+        let mut nexts: Vec<u32> = Vec::new();
+        let mut rows: Vec<usize> = Vec::new();
+        for k in 0..count {
+            let len = inputs[k].len();
+            // The first step is the prompt; later steps are a token and its drafts.
+            let accepted = if step == 0 {
+                len - 1
+            } else {
+                inputs[k][1..]
+                    .iter()
+                    .zip(&ids[row..row + len])
+                    .take_while(|(d, g)| d == g)
+                    .count()
+            };
+            if step > 0 {
+                outs[k].extend_from_slice(&inputs[k][1..1 + accepted]);
+            }
+            let next = ids[row + accepted];
+            outs[k].push(next);
+            kept.push(accepted + 1);
+            nexts.push(next);
+            rows.push(row);
+            row += len;
+        }
+        let steps: Vec<MtpStep> = (0..count)
+            .map(|k| MtpStep {
+                slot: k,
+                row: rows[k],
+                inputs: &inputs[k][..kept[k]],
+                position: positions[k],
+                next: nexts[k],
+                n_draft: [0, 2, 4][(k + step) % 3],
+            })
+            .collect();
+        let drafted = stages[1].mtp_step_many(&steps, 0.0).unwrap();
+        drop(steps);
+        for k in 0..count {
+            if kept[k] < inputs[k].len() {
+                for stage in stages.iter_mut() {
+                    stage.rollback(k, positions[k] + kept[k]).unwrap();
+                }
+            }
+            positions[k] += kept[k];
+            inputs[k] = std::iter::once(nexts[k])
+                .chain(drafted[k].iter().copied())
+                .collect();
+        }
+        step += 1;
+    }
+    for out in &mut outs {
+        out.truncate(n);
+    }
+    assert_eq!(outs, solo);
+}

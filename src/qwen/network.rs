@@ -983,26 +983,17 @@ fn compute_batch(
     // increasing, so frames go in slot order.
     let mut together = together;
     together.sort_by_key(|&k| ready[k].1);
-    // A device call holds at most MAX_BATCH_POSITIONS positions, so frames go in groups.
-    let mut groups: Vec<Vec<usize>> = vec![];
-    let mut size = 0;
-    // Frames that carry drafts also stay in runs of adjacent slots. With one shared attention
-    // buffer the engine would merge any slots into a step, but its rollback states then come
-    // out wrong: drafted sessions in slots with gaps between them lost their own context.
-    let mut previous: Option<(usize, bool)> = None;
-    for &k in &together {
-        let h = &frames[ready[k].0].0.header;
-        let (n, slot) = (h.seq_len, ready[k].1);
-        let gap = previous
-            .is_some_and(|(before, drafted)| (drafted || h.speculative) && slot != before + 1);
-        previous = Some((slot, h.speculative));
-        if groups.is_empty() || gap || size + n > MAX_BATCH_POSITIONS {
-            groups.push(vec![]);
-            size = 0;
-        }
-        groups.last_mut().expect("a group was just added").push(k);
-        size += n;
-    }
+    let shapes: Vec<(usize, usize, bool)> = together
+        .iter()
+        .map(|&k| {
+            let h = &frames[ready[k].0].0.header;
+            (ready[k].1, h.seq_len, h.speculative)
+        })
+        .collect();
+    let groups: Vec<Vec<usize>> = device_calls(&shapes)
+        .into_iter()
+        .map(|group| group.into_iter().map(|n| together[n]).collect())
+        .collect();
     let width = worker.manifest.hidden_size();
     for group in groups.into_iter().filter(|g| g.len() > 1) {
         let items: Vec<(usize, usize, usize)> = group
@@ -1146,6 +1137,34 @@ fn compute_batch(
         .into_iter()
         .map(|r| r.expect("every frame has a result"))
         .collect()
+}
+
+/// Splits frames, given in slot order as (slot, positions, carries drafts), into device calls.
+/// A call holds at most MAX_BATCH_POSITIONS positions. A call with a frame that carries drafts
+/// holds only slots that follow one another without a gap: with one shared attention buffer
+/// the engine would merge any slots into a step, but its rollback states then come out wrong,
+/// and drafted sessions in a call with a gap anywhere in it lost their own context.
+fn device_calls(frames: &[(usize, usize, bool)]) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = vec![];
+    // Of the group being filled: positions, last slot, no gaps so far, any drafts so far.
+    let (mut size, mut before, mut unbroken, mut drafted) = (0, 0, true, false);
+    for (n, &(slot, positions, speculative)) in frames.iter().enumerate() {
+        let adjacent = slot == before + 1;
+        let fits = !groups.is_empty()
+            && size + positions <= MAX_BATCH_POSITIONS
+            && ((unbroken && adjacent) || !(drafted || speculative));
+        if fits {
+            unbroken &= adjacent;
+            drafted |= speculative;
+            size += positions;
+        } else {
+            groups.push(vec![]);
+            (size, unbroken, drafted) = (positions, true, speculative);
+        }
+        before = slot;
+        groups.last_mut().expect("a group was just added").push(n);
+    }
+    groups
 }
 
 /// The final stage's MTP head sees every kept position of each frame, then drafts after the
@@ -1390,6 +1409,30 @@ async fn result(State(state): State<Worker>, Json(request): Json<Collect>) -> Re
 #[cfg(test)]
 mod draft_tests {
     use super::*;
+
+    #[test]
+    fn a_call_with_drafts_has_no_gap_between_its_slots() {
+        let plain = |slot| (slot, 1, false);
+        let drafts = |slot| (slot, 3, true);
+        // Without drafts any slots share a call.
+        assert_eq!(device_calls(&[plain(1), plain(3), plain(7)]), [[0, 1, 2]]);
+        // A gap before a drafted frame, or after one, starts a new call.
+        assert_eq!(
+            device_calls(&[drafts(1), drafts(2), drafts(4), plain(6)]),
+            vec![vec![0, 1], vec![2], vec![3]]
+        );
+        // A drafted frame does not join a call that already has a gap, even next to its
+        // neighbour, and a gap does not follow a drafted frame two places back.
+        assert_eq!(
+            device_calls(&[plain(1), plain(3), drafts(4)]),
+            vec![vec![0, 1], vec![2]]
+        );
+        assert_eq!(
+            device_calls(&[drafts(2), plain(3), plain(5)]),
+            vec![vec![0, 1], vec![2]]
+        );
+        assert_eq!(device_calls(&[(0, 400, false), (1, 200, false)]).len(), 2);
+    }
 
     #[test]
     fn drafts_follow_where_a_pass_spends_its_time() {
