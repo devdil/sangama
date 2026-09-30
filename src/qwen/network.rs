@@ -79,6 +79,9 @@ fn one_slot() -> usize {
 /// A session idle this long loses its slot.
 const SESSION_IDLE: Duration = Duration::from_secs(60);
 
+/// Positions one device call can hold: the engine's batch size.
+const MAX_BATCH_POSITIONS: usize = 512;
+
 /// Most tokens a client may ask the final stage to draft per step.
 const MAX_DRAFTS: usize = 8;
 
@@ -856,53 +859,71 @@ fn compute_batch(
     } else {
         vec![]
     };
-    // Output and first batch row of each ready frame.
-    let mut outputs: Vec<Option<Result<(Output, usize)>>> = ready.iter().map(|_| None).collect();
-    if together.len() > 1 {
-        let items: Vec<(usize, usize, usize)> = together
+    // Output of each ready frame, and the drafts the final stage proposes after it.
+    let mut outputs: Vec<Option<Result<Output>>> = ready.iter().map(|_| None).collect();
+    let mut drafts: Vec<Vec<u32>> = ready.iter().map(|_| vec![]).collect();
+    // A device call holds at most MAX_BATCH_POSITIONS positions, so frames go in groups.
+    let mut groups: Vec<Vec<usize>> = vec![];
+    let mut size = 0;
+    for &k in &together {
+        let n = frames[ready[k].0].0.header.seq_len;
+        if groups.is_empty() || size + n > MAX_BATCH_POSITIONS {
+            groups.push(vec![]);
+            size = 0;
+        }
+        groups.last_mut().expect("a group was just added").push(k);
+        size += n;
+    }
+    let width = worker.manifest.hidden_size();
+    for group in groups.into_iter().filter(|g| g.len() > 1) {
+        let items: Vec<(usize, usize, usize)> = group
             .iter()
             .map(|&k| {
                 let h = &frames[ready[k].0].0.header;
                 (ready[k].1, h.seq_len, h.position)
             })
             .collect();
-        let tokens: Vec<u32> = together
+        let tokens: Vec<u32> = group
             .iter()
             .flat_map(|&k| frames[ready[k].0].0.header.tokens.iter().copied())
             .collect();
-        let values: Vec<f32> = together
+        let values: Vec<f32> = group
             .iter()
             .flat_map(|&k| frames[ready[k].0].0.values.iter().copied())
             .collect();
-        let width = worker.manifest.hidden_size();
         match resident.model.forward_many(&items, &tokens, &values) {
             Ok(many) => {
                 let mut row = 0;
-                for (&k, item) in together.iter().zip(&items) {
+                for (&k, item) in group.iter().zip(&items) {
                     let n = item.1;
-                    outputs[k] = Some(Ok((
-                        match &many {
-                            super::engine::Many::Hidden(all) => {
-                                Output::Values(all[row * width..(row + n) * width].to_vec())
-                            }
-                            super::engine::Many::Tokens(ids) => {
-                                let ids = &ids[row..row + n];
-                                // A frame without drafts wants only the token after its last position.
-                                Output::Tokens(if frames[ready[k].0].0.header.speculative {
-                                    ids.to_vec()
-                                } else {
-                                    vec![ids[n - 1]]
-                                })
-                            }
+                    let h = &frames[ready[k].0].0.header;
+                    let output = match &many {
+                        super::engine::Many::Hidden(all) => {
+                            Output::Values(all[row * width..(row + n) * width].to_vec())
+                        }
+                        super::engine::Many::Tokens(ids) => {
+                            let ids = &ids[row..row + n];
+                            // A frame without drafts wants only the token after its last position.
+                            Output::Tokens(if h.speculative {
+                                ids.to_vec()
+                            } else {
+                                vec![ids[n - 1]]
+                            })
+                        }
+                    };
+                    // The MTP head reads this call's hidden states, so it runs before the next.
+                    outputs[k] = Some(draft_after(resident, last, h, item.0, row, &output).map(
+                        |proposed| {
+                            drafts[k] = proposed;
+                            output
                         },
-                        row,
-                    )));
+                    ));
                     row += n;
                 }
             }
             Err(error) => {
                 let message = error.to_string();
-                for &k in &together {
+                for &k in &group {
                     outputs[k] = Some(Err(anyhow::anyhow!("{message}")));
                 }
             }
@@ -914,58 +935,21 @@ fn compute_batch(
         }
         let (frame, _) = &frames[*index];
         let h = &frame.header;
-        outputs[k] = Some(if last && h.sample && h.speculative {
+        let computed = if last && h.sample && h.speculative {
             resident
                 .model
                 .greedy(*slot, &h.tokens, &frame.values, h.seq_len, h.position)
-                .map(|ids| (Output::Tokens(ids), 0))
+                .map(Output::Tokens)
         } else {
             resident
                 .model
                 .forward(*slot, &h.tokens, &frame.values, h.seq_len, h.position)
-                .map(|values| (Output::Values(values), 0))
-        });
-    }
-    // The final stage's MTP head sees every kept position of each frame, then drafts after
-    // the token the model chose: the drafts it verified up to the first rejection, then its
-    // own token. This must follow the decode it reads hidden states from.
-    let mut drafts: Vec<Vec<u32>> = ready.iter().map(|_| vec![]).collect();
-    if last && resident.model.has_mtp() {
-        for (k, (index, slot, _)) in ready.iter().enumerate() {
-            let h = &frames[*index].0.header;
-            let Some(Ok((output, row))) = &outputs[k] else {
-                continue;
-            };
-            if h.inputs.is_empty() {
-                continue;
-            }
-            let (keep, next) = match output {
-                Output::Tokens(ids) if h.speculative => {
-                    let accepted = h.inputs[1..]
-                        .iter()
-                        .zip(ids)
-                        .take_while(|(draft, model)| draft == model)
-                        .count();
-                    (accepted + 1, ids[accepted])
-                }
-                Output::Tokens(ids) => (h.seq_len, ids[0]),
-                Output::Values(values) => (h.seq_len, argmax(values) as u32),
-            };
-            let wanted = if h.sample { h.mtp_drafts } else { 0 };
-            let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
-            match resident.model.mtp_step(
-                *slot,
-                *row,
-                &h.inputs[..keep],
-                h.position,
-                next,
-                wanted.min(room),
-                mtp_p_min(),
-            ) {
-                Ok(proposed) => drafts[k] = proposed,
-                Err(error) => outputs[k] = Some(Err(error)),
-            }
-        }
+                .map(Output::Values)
+        };
+        outputs[k] = Some(computed.and_then(|output| {
+            drafts[k] = draft_after(resident, last, h, *slot, 0, &output)?;
+            Ok(output)
+        }));
     }
     if let Some(ms) = simulated_ms_per_layer_token() {
         let layers = (worker.info.shard.end - worker.info.shard.start) as f64;
@@ -982,7 +966,7 @@ fn compute_batch(
     for (k, (index, _, draft)) in ready.into_iter().enumerate() {
         let (frame, received_ms) = frames[index].take().expect("each frame is finished once");
         let output = outputs[k].take().expect("every ready frame was computed");
-        results[index] = Some(output.and_then(|(output, _)| {
+        results[index] = Some(output.and_then(|output| {
             finish(
                 worker,
                 resident,
@@ -1005,6 +989,45 @@ fn compute_batch(
         .into_iter()
         .map(|r| r.expect("every frame has a result"))
         .collect()
+}
+
+/// The final stage's MTP head sees every kept position of a frame, then drafts after the token
+/// the model chose: the drafts it verified up to the first rejection, then its own token. It
+/// reads the hidden states of the device call the frame was in, where the frame began at `row`.
+fn draft_after(
+    resident: &mut Resident,
+    last: bool,
+    h: &Header,
+    slot: usize,
+    row: usize,
+    output: &Output,
+) -> Result<Vec<u32>> {
+    if !last || h.inputs.is_empty() || !resident.model.has_mtp() {
+        return Ok(vec![]);
+    }
+    let (keep, next) = match output {
+        Output::Tokens(ids) if h.speculative => {
+            let accepted = h.inputs[1..]
+                .iter()
+                .zip(ids)
+                .take_while(|(draft, model)| draft == model)
+                .count();
+            (accepted + 1, ids[accepted])
+        }
+        Output::Tokens(ids) => (h.seq_len, ids[0]),
+        Output::Values(values) => (h.seq_len, argmax(values) as u32),
+    };
+    let wanted = if h.sample { h.mtp_drafts } else { 0 };
+    let room = CONTEXT_LIMIT.saturating_sub(h.position + keep);
+    resident.model.mtp_step(
+        slot,
+        row,
+        &h.inputs[..keep],
+        h.position,
+        next,
+        wanted.min(room),
+        mtp_p_min(),
+    )
 }
 
 /// Records the session's progress and turns a computed frame into the one to pass on.
